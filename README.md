@@ -3,23 +3,6 @@
 
 High-quality image generation using the Nano Banana Pro or Nano Banana OG. Create stunning images with advanced AI technology from Google.
 
-## ✨ Features
-
-- **High-Quality Generation**: Powered by Google's Gemini 3 Pro model
-- **4K Resolution Support**: Generate images up to 4K resolution
-- **Multiple Aspect Ratios**: Choose from various aspect ratios (1:1, 16:9, 4:3, etc.)
-- **Temperature Control**: Adjust creativity level for your generations
-- **Generation History**: Save and manage your generated images
-- **Local Storage**: All generations stored locally on your device
-- **Responsive Design**: Works seamlessly across desktop and mobile devices
-
-## 🚀 Tech Stack
-
-- **Frontend**: React 19, TypeScript, Vite
-- **AI**: Google Gemini 3 Pro Image Generation API
-- **Icons**: Lucide React
-- **Styling**: Tailwind CSS (utility classes)
-
 ## 🛠️ Run Locally
 
 **Prerequisites:** Node.js (v16 or higher)
@@ -28,7 +11,7 @@ High-quality image generation using the Nano Banana Pro or Nano Banana OG. Creat
 
 1. **Clone the repository:**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/danduma/gobananas
    cd gobananas
    ```
 
@@ -62,6 +45,25 @@ High-quality image generation using the Nano Banana Pro or Nano Banana OG. Creat
 ## 🎨 Supported Models
 - Gemini 3 Pro Image Preview (latest and greatest)
 - Gemini 2.5 Flash Image (older model)
+
+
+## ✨ Features
+
+- **High-Quality Generation**: Powered by Google's Gemini 3 Pro model
+- **4K Resolution Support**: Generate images up to 4K resolution
+- **Multiple Aspect Ratios**: Choose from various aspect ratios (1:1, 16:9, 4:3, etc.)
+- **Temperature Control**: Adjust creativity level for your generations
+- **Generation History**: Save and manage your generated images
+- **Local Storage**: All generations stored locally on your device
+- **Responsive Design**: Works seamlessly across desktop and mobile devices
+
+## 🚀 Tech Stack
+
+- **Frontend**: React 19, TypeScript, Vite
+- **AI**: Google Gemini 3 Pro Image Generation API
+- **Icons**: Lucide React
+- **Styling**: Tailwind CSS (utility classes)
+
 
 ## 📄 License
 See [LICENSE.md](LICENSE.md) for details.
