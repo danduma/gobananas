@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Sparkles, AlertCircle, Image as ImageIcon, Maximize2, Ratio, Cpu, Sidebar, ChevronLeft, ChevronRight, Key, X, Save, Loader2 } from 'lucide-react';
-import { AspectRatio, GenerationConfig, ImageSize, Model } from '../types';
+import { AspectRatio, LegacyGenerationConfig, ImageSize, Model } from '../types';
 import { generateImageWithGemini, APIKeyError } from '../services/geminiService';
 import { GenerationStorage } from '../services/generationStorage';
 import { GenerationSidebar } from './GenerationSidebar';
@@ -191,7 +191,7 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
     setCurrentGenerationId(undefined);
 
     try {
-      const config: GenerationConfig = {
+      const config: LegacyGenerationConfig = {
         prompt,
         aspectRatio,
         imageSize,

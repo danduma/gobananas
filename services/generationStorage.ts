@@ -1,8 +1,8 @@
-import { GeneratedImage, GenerationConfig } from '../types';
+import { GeneratedImage, LegacyGenerationConfig } from '../types';
 import { FileSystemStorage } from './fileSystemStorage';
 
 export class GenerationStorage {
-  static async saveGeneration(config: GenerationConfig, imageUrl: string, imageData: string): Promise<GeneratedImage> {
+  static async saveGeneration(config: LegacyGenerationConfig, imageUrl: string, imageData: string): Promise<GeneratedImage> {
     if (!FileSystemStorage.hasDirectoryAccess()) {
       throw new Error('No save directory selected. Please select a directory first.');
     }

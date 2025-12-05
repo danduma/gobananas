@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { KeySelector } from './components/KeySelector';
-import { Generator } from './components/Generator';
+import { ChatInterface } from './components/ChatInterface';
 
 const App: React.FC = () => {
   const [hasKey, setHasKey] = useState<boolean>(false);
@@ -50,7 +50,7 @@ const App: React.FC = () => {
     return <KeySelector onKeySelected={handleKeySelected} />;
   }
 
-  return <Generator onResetKey={handleResetKey} />;
+  return <ChatInterface onResetKey={handleResetKey} />;
 };
 
 export default App;

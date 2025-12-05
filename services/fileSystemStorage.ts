@@ -4,6 +4,8 @@
 export class FileSystemStorage {
   private static directoryHandle: FileSystemDirectoryHandle | null = null;
   private static readonly METADATA_FILE = 'generations.json';
+  private static readonly CONVERSATIONS_FILE = 'conversations.json';
+  private static readonly INPUT_IMAGES_DIR = 'input_images';
 
   // Request permission to access a directory
   static async selectDirectory(): Promise<boolean> {
@@ -54,6 +56,106 @@ export class FileSystemStorage {
     } catch (error) {
       console.error('Failed to save image:', error);
       throw error;
+    }
+  }
+
+  static async ensureInputImagesDirectory(): Promise<FileSystemDirectoryHandle> {
+    if (!this.directoryHandle) {
+      throw new Error('No directory selected');
+    }
+
+    return this.directoryHandle.getDirectoryHandle(this.INPUT_IMAGES_DIR, { create: true });
+  }
+
+  static async saveInputImage(file: File, imageId: string): Promise<void> {
+    if (!this.directoryHandle) {
+      throw new Error('No directory selected for saving input images');
+    }
+
+    const inputDir = await this.ensureInputImagesDirectory();
+    const fileHandle = await inputDir.getFileHandle(imageId, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(file);
+    await writable.close();
+  }
+
+  static async deleteInputImage(imageId: string): Promise<void> {
+    if (!this.directoryHandle) {
+      return;
+    }
+
+    try {
+      const inputDir = await this.ensureInputImagesDirectory();
+      await inputDir.removeEntry(imageId);
+    } catch (error) {
+      console.warn('Failed to delete input image:', error);
+    }
+  }
+
+  static async deleteGeneratedImage(imageId: string): Promise<void> {
+    if (!this.directoryHandle) {
+      return;
+    }
+
+    try {
+      const filename = `nano-banana-${imageId}.png`;
+      await this.directoryHandle.removeEntry(filename);
+    } catch (error) {
+      console.warn('Failed to delete generated image:', error);
+    }
+  }
+
+  private static async loadFileAsBase64(fileHandle: FileSystemFileHandle): Promise<string> {
+    const file = await fileHandle.getFile();
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    bytes.forEach((b) => {
+      binary += String.fromCharCode(b);
+    });
+    return btoa(binary);
+  }
+
+  static async loadImageData(imageId: string, isInputImage: boolean): Promise<string> {
+    if (!this.directoryHandle) {
+      throw new Error('No directory selected');
+    }
+
+    if (isInputImage) {
+      const inputDir = await this.ensureInputImagesDirectory();
+      const fileHandle = await inputDir.getFileHandle(imageId);
+      return this.loadFileAsBase64(fileHandle);
+    }
+
+    const filename = `nano-banana-${imageId}.png`;
+    const fileHandle = await this.directoryHandle.getFileHandle(filename);
+    return this.loadFileAsBase64(fileHandle);
+  }
+
+  static async saveConversations(data: object): Promise<void> {
+    if (!this.directoryHandle) {
+      throw new Error('No directory selected for saving conversations');
+    }
+
+    const fileHandle = await this.directoryHandle.getFileHandle(this.CONVERSATIONS_FILE, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(data, null, 2));
+    await writable.close();
+  }
+
+  static async loadConversations(): Promise<any | null> {
+    if (!this.directoryHandle) {
+      return null;
+    }
+
+    try {
+      const fileHandle = await this.directoryHandle.getFileHandle(this.CONVERSATIONS_FILE);
+      const file = await fileHandle.getFile();
+      const text = await file.text();
+      return JSON.parse(text);
+    } catch (error) {
+      console.log('No conversations file yet, starting fresh');
+      return null;
     }
   }
 
