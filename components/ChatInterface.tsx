@@ -40,6 +40,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       return null;
     }
   });
+  const [selectingFolder, setSelectingFolder] = useState(false);
   const [model, setModel] = useState<Model>('gemini-3-pro-image-preview');
   const [temperature, setTemperature] = useState<number>(1);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
@@ -81,16 +82,27 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   const refreshThreads = async () => {
     const loaded = await ConversationStorage.loadThreads();
     const withThumbs: ThreadWithUi[] = await Promise.all(
-      loaded.map(async (thread) => ({
-        ...thread,
-        thumbnailUrl: thread.thumbnailImageId
+      loaded.map(async (thread) => {
+        const computedThumb = thread.thumbnailImageId
           ? await loadImageUrl(thread.thumbnailImageId, false)
-          : undefined,
-        lastMessagePreview: getLastTextPreview(thread),
-      }))
+          : undefined;
+        return {
+          ...thread,
+          thumbnailUrl: computedThumb || thread.thumbnailUrl,
+          lastMessagePreview: getLastTextPreview(thread),
+        };
+      })
     );
 
     setThreads(withThumbs);
+
+    // Backfill missing thumbnails for existing threads so previews persist
+    const backfillNeeded = withThumbs.filter(
+      (thread, idx) => !loaded[idx]?.thumbnailUrl && thread.thumbnailUrl
+    );
+    if (backfillNeeded.length > 0) {
+      await Promise.all(backfillNeeded.map((thread) => ConversationStorage.saveThread(thread)));
+    }
 
     if (!currentThread && withThumbs.length > 0) {
       handleSelectThread(withThumbs[0].id);
@@ -110,6 +122,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   ): Promise<string | undefined> => {
     try {
       const base64 = await FileSystemStorage.loadImageData(imageId, isInputImage, mimeType);
+      if (!base64) return undefined;
       return `data:${mimeType};base64,${base64}`;
     } catch (err) {
       console.warn('Failed to load image data', err);
@@ -160,14 +173,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   };
 
   const handleSelectDirectory = async () => {
-    await ensureDirectoryAccess();
+    if (selectingFolder) return;
+    setSelectingFolder(true);
+    try {
+      await ensureDirectoryAccess();
+    } finally {
+      setSelectingFolder(false);
+    }
+  };
+
+  const addImageAttachments = (files: File[]) => {
+    const images = files.filter((file) => file.type.startsWith('image/'));
+    if (images.length === 0) return;
+    setAttachedImages((prev) => [...prev, ...images]);
   };
 
   const handleFilesSelected = (files: FileList | null) => {
     if (!files) return;
-    const incoming = Array.from(files).filter((file) => file.type.startsWith('image/'));
-    if (incoming.length === 0) return;
-    setAttachedImages((prev) => [...prev, ...incoming]);
+    addImageAttachments(Array.from(files));
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(event.clipboardData?.items || []);
+    const images = items
+      .map((item) => (item.kind === 'file' ? item.getAsFile() : null))
+      .filter((file): file is File => Boolean(file && file.type.startsWith('image/')));
+    if (images.length > 0) {
+      event.preventDefault();
+      addImageAttachments(images);
+    }
   };
 
   const handleRemoveAttachment = (index: number) => {
@@ -188,10 +222,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     setCurrentThread(null);
     setMessageInput('');
     setAttachedImages([]);
-    setModel('gemini-3-pro-image-preview');
-    setTemperature(1);
-    setAspectRatio('1:1');
-    setImageSize('1K');
   };
 
   const handleSelectThread = async (threadId: string) => {
@@ -294,6 +324,27 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         messages: [...baseThread.messages, userMessage],
       };
 
+      // Immediately reflect the new user message and hide the empty-state placeholder
+      setCurrentThread(workingThread);
+      setThreads((prev) => {
+        const existingIndex = prev.findIndex((t) => t.id === workingThread.id);
+        if (existingIndex >= 0) {
+          const updated = [...prev];
+          updated[existingIndex] = {
+            ...workingThread,
+            lastMessagePreview: getLastTextPreview(workingThread),
+          };
+          return updated;
+        }
+        return [
+          {
+            ...workingThread,
+            lastMessagePreview: getLastTextPreview(workingThread),
+          },
+          ...prev,
+        ];
+      });
+
       const generationConfig: GenerationConfig = {
         model: workingThread.model,
         temperature: workingThread.temperature,
@@ -301,7 +352,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         imageSize,
       };
 
-      const { dataUrl: imageDataUrl, mimeType, thoughtSignature } = await generateImageFromConversation(workingThread.messages, generationConfig);
+      const { dataUrl: imageDataUrl, mimeType, thoughtSummaries } = await generateImageFromConversation(workingThread.messages, generationConfig);
       const base64Data = imageDataUrl.split(',')[1];
       const imageId = createId('gen');
       await FileSystemStorage.saveImage(imageId, base64Data, mimeType);
@@ -316,7 +367,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
             mimeType,
             isInputImage: false,
             url: imageDataUrl,
-            thoughtSignature,
+            thoughtSummaries,
           },
         ],
         timestamp: Date.now(),
@@ -368,6 +419,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         {currentThread.messages.map((message) => (
           <MessageBubble key={message.id} message={message} />
         ))}
+        {isGenerating && (
+          <div className="flex justify-start w-full">
+            <div className="max-w-3xl rounded-2xl p-4 shadow-lg border bg-slate-800 border-slate-700 text-slate-50 flex items-center gap-3">
+              <Loader2 className="w-4 h-4 animate-spin text-yellow-400" />
+              <span className="text-sm text-slate-300">BananaBot is thinking...</span>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -402,9 +461,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
             </div>
             <button
               onClick={handleSelectDirectory}
-              className="px-3 py-2 rounded-lg border border-slate-700 hover:border-yellow-400 text-slate-200 text-sm"
+              disabled={selectingFolder}
+              className={`px-3 py-2 rounded-lg border text-slate-200 text-sm flex items-center gap-2 ${
+                selectingFolder
+                  ? 'border-slate-700 bg-slate-800 cursor-wait text-slate-400'
+                  : 'border-slate-700 hover:border-yellow-400'
+              }`}
             >
-              {FileSystemStorage.hasDirectoryAccess() ? 'Change folder' : 'Select folder'}
+              {selectingFolder
+                ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Opening...
+                  </>
+                )
+                : FileSystemStorage.hasDirectoryAccess()
+                  ? 'Change folder'
+                  : 'Select folder'}
             </button>
             <button
               onClick={onResetKey}
@@ -489,6 +562,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
               <textarea
                 value={messageInput}
                 onChange={(e) => setMessageInput(e.target.value)}
+                onPaste={handlePaste}
                 placeholder="Describe the image you want or ask for tweaks..."
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 pr-28 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none resize-none"
                 rows={3}

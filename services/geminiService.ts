@@ -71,16 +71,18 @@ const formatMessagesForGemini = async (messages: ConversationMessage[]) => {
   return Promise.all(messages.map(async (msg) => {
     const parts = await Promise.all(msg.content.map(async (content) => {
       if (content.type === 'text') {
-        return { text: content.text };
+        const part: any = { text: content.text };
+        return part;
       }
 
       const base64Data = await FileSystemStorage.loadImageData(content.imageId, content.isInputImage);
-      return {
+      const part: any = {
         inlineData: {
           mimeType: content.mimeType,
           data: base64Data,
         },
       };
+      return part;
     }));
 
     return {
@@ -90,13 +92,25 @@ const formatMessagesForGemini = async (messages: ConversationMessage[]) => {
   }));
 };
 
-const extractImageDataUrl = (response: any): string => {
+const extractImageData = (response: any): { dataUrl: string; mimeType: string; thoughtSummaries?: string[] } => {
+  const thoughtSummaries: string[] = [];
+
   if (response?.candidates && response.candidates.length > 0) {
-    const parts = response.candidates[0].content.parts;
+    const parts = response.candidates[0].content?.parts || [];
     for (const part of parts) {
-      if (part.inlineData?.data) {
+      if (part.thought && part.text) {
+        thoughtSummaries.push(part.text);
+      }
+    }
+    for (const part of parts) {
+      // Skip thought-only parts
+      if (part.inlineData?.data && !part.thought) {
         const mimeType = part.inlineData.mimeType || 'image/png';
-        return `data:${mimeType};base64,${part.inlineData.data}`;
+        return {
+          dataUrl: `data:${mimeType};base64,${part.inlineData.data}`,
+          mimeType,
+          thoughtSummaries: thoughtSummaries.length ? thoughtSummaries : undefined,
+        };
       }
     }
   }
@@ -107,7 +121,7 @@ const extractImageDataUrl = (response: any): string => {
 export const generateImageFromConversation = async (
   messages: ConversationMessage[],
   config: GenerationConfig
-): Promise<string> => {
+): Promise<{ dataUrl: string; mimeType: string; thoughtSummaries?: string[] }> => {
   const apiKey = localStorage.getItem('gemini-api-key');
   if (!apiKey) {
     throw new APIKeyError();
@@ -117,14 +131,21 @@ export const generateImageFromConversation = async (
 
   const send = async (history: ConversationMessage[]) => {
     const geminiMessages = await formatMessagesForGemini(history);
-    const response = await ai.models.generateContent({
+      const response = await ai.models.generateContent({
       model: config.model,
       contents: geminiMessages,
       generationConfig: {
         temperature: config.temperature,
+        imageConfig: {
+          aspectRatio: config.aspectRatio,
+          imageSize: config.imageSize,
+        },
+      },
+      thinkingConfig: {
+        includeThoughts: true,
       },
     });
-    return extractImageDataUrl(response);
+    return extractImageData(response);
   };
 
   try {

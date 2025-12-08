@@ -6,6 +6,8 @@ export type Model = 'gemini-3-pro-image-preview' | 'gemini-2.5-flash-image' | 'g
 export interface GenerationConfig {
   model: Model;
   temperature: number;
+  aspectRatio?: AspectRatio;
+  imageSize?: ImageSize;
 }
 
 export interface LegacyGenerationConfig {
@@ -34,6 +36,7 @@ export type MessageRole = 'user' | 'assistant';
 export interface TextContent {
   type: 'text';
   text: string;
+  thoughtSignature?: string;
 }
 
 export interface ImageContent {
@@ -42,6 +45,7 @@ export interface ImageContent {
   mimeType: string;
   url?: string;
   isInputImage: boolean;
+  thoughtSummaries?: string[];
 }
 
 export type MessageContent = TextContent | ImageContent;

@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { ChevronDown, ChevronUp, Download } from 'lucide-react';
 import { ConversationMessage } from '../types';
 
 interface MessageBubbleProps {
@@ -7,6 +8,11 @@ interface MessageBubbleProps {
 
 export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const isUser = message.role === 'user';
+  const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
+
+  const toggleThoughts = (id: string) => {
+    setExpandedThoughts((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} w-full`}>
@@ -33,14 +39,56 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
                   {content.isInputImage ? 'Attached image' : 'Generated image'}
                 </div>
                 {content.url ? (
-                  <img
-                    src={content.url}
-                    alt={content.imageId}
-                    className="rounded-xl max-h-[420px] object-contain border border-slate-700"
-                  />
+                  <div className="relative group inline-block">
+                    <img
+                      src={content.url}
+                      alt={content.imageId}
+                      className="rounded-xl max-h-[420px] object-contain border border-slate-700"
+                    />
+                    <a
+                      href={content.url}
+                      download={content.imageId || 'image'}
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity absolute top-2 right-2 bg-black/60 text-white rounded-full p-2 border border-white/10 shadow-lg backdrop-blur-sm"
+                      aria-label="Download image"
+                      title="Download"
+                    >
+                      <Download className="w-4 h-4" />
+                    </a>
+                  </div>
                 ) : (
                   <div className="rounded-xl h-48 bg-slate-900/60 border border-slate-700 flex items-center justify-center text-slate-500 text-sm">
                     Image loading...
+                  </div>
+                )}
+                {content.thoughtSummaries && content.thoughtSummaries.length > 0 && (
+                  <div className="bg-slate-900/60 border border-slate-700 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => toggleThoughts(`${message.id}-${content.imageId}-thoughts`)}
+                      className="w-full flex items-center justify-between px-3 py-2 text-sm text-slate-200 hover:bg-slate-800 rounded-t-xl"
+                    >
+                      <span className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-400">
+                        Model thoughts
+                        <span className="text-slate-500 text-[10px]">({content.thoughtSummaries.length})</span>
+                      </span>
+                      {expandedThoughts[`${message.id}-${content.imageId}-thoughts`] ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      )}
+                    </button>
+                    {expandedThoughts[`${message.id}-${content.imageId}-thoughts`] && (
+                      <div className="px-3 pb-3 space-y-2 text-sm text-slate-200">
+                        {content.thoughtSummaries.map((summary, i) => (
+                          <div
+                            key={i}
+                            className="rounded-lg border border-slate-800/80 bg-slate-900/80 px-3 py-2 leading-relaxed"
+                          >
+                            {summary}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -54,3 +102,4 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
     </div>
   );
 };
+

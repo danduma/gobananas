@@ -3,6 +3,24 @@ import { FileSystemStorage } from './fileSystemStorage';
 
 const MAX_THREADS = 50;
 
+const sanitizeThread = (thread: ConversationThread): ConversationThread => {
+  return {
+    ...thread,
+    // Keep thumbnailUrl for quick sidebar previews, but drop heavy inline message URLs.
+    messages: thread.messages.map((msg) => ({
+      ...msg,
+      content: msg.content.map((item) =>
+        item.type === 'image'
+          ? {
+              ...item,
+              url: undefined,
+            }
+          : item
+      ),
+    })),
+  };
+};
+
 export class ConversationStorage {
   static async loadThreads(): Promise<ConversationThread[]> {
     await FileSystemStorage.init();
@@ -125,9 +143,11 @@ export class ConversationStorage {
   }
 
   private static async saveAllThreads(threads: ConversationThread[]): Promise<void> {
+    const sanitized = threads.map(sanitizeThread);
+
     await FileSystemStorage.saveConversations({
       version: '2.0',
-      threads,
+      threads: sanitized,
     });
   }
 }
