@@ -1,244 +1,196 @@
-// File System Access API based storage for images and metadata
-// This allows saving to actual local files instead of browser storage
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5174/api';
+
+const toBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+};
+
+type StorageConfig = {
+  storagePath: string | null;
+  apiKey: string | null;
+};
 
 export class FileSystemStorage {
-  private static directoryHandle: FileSystemDirectoryHandle | null = null;
-  private static readonly METADATA_FILE = 'generations.json';
-  private static readonly CONVERSATIONS_FILE = 'conversations.json';
-  private static readonly INPUT_IMAGES_DIR = 'input_images';
+  private static config: StorageConfig = { storagePath: null, apiKey: null };
+  private static initialized = false;
 
-  // Request permission to access a directory
-  static async selectDirectory(): Promise<boolean> {
-    if (!('showDirectoryPicker' in window)) {
-      console.warn('File System Access API is not supported in this browser.');
-      return false;
-    }
+  private static async refreshConfig(): Promise<void> {
     try {
-      // @ts-ignore: Property 'showDirectoryPicker' might not exist on type 'Window'
-      this.directoryHandle = await (window as any).showDirectoryPicker({
-        mode: 'readwrite',
-        startIn: 'documents'
+      const res = await fetch(`${API_BASE}/config`);
+      if (!res.ok) {
+        throw new Error('Failed to load storage config');
+      }
+      const data = await res.json();
+      this.config = { storagePath: data.storagePath || null, apiKey: data.apiKey || null };
+      if (data.apiKey) {
+        localStorage.setItem('gemini-api-key', data.apiKey);
+      }
+    } catch (error) {
+      console.warn('Could not refresh storage config', error);
+    }
+  }
+
+  static async init(): Promise<void> {
+    if (this.initialized) return;
+    await this.refreshConfig();
+    this.initialized = true;
+  }
+
+  static hasDirectoryAccess(): boolean {
+    return Boolean(this.config.storagePath);
+  }
+
+  static getDirectoryName(): string | null {
+    if (!this.config.storagePath) return null;
+    const parts = this.config.storagePath.split(/[/\\]/).filter(Boolean);
+    return parts[parts.length - 1] || this.config.storagePath;
+  }
+
+  static async selectDirectory(): Promise<boolean> {
+    try {
+      const pick = await fetch(`${API_BASE}/select-folder`);
+      if (!pick.ok) {
+        console.error('Folder selection cancelled');
+        return false;
+      }
+      const { path: folderPath } = await pick.json();
+      if (!folderPath) return false;
+      const res = await fetch(`${API_BASE}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ storagePath: folderPath }),
       });
+      if (!res.ok) {
+        console.error('Failed to set storage folder');
+        return false;
+      }
+      const data = await res.json();
+      this.config.storagePath = data.storagePath || null;
       return true;
     } catch (error) {
-      console.warn('Directory selection cancelled or failed:', error);
+      console.error('Folder selection failed', error);
       return false;
     }
   }
 
-  // Check if we have directory access
-  static hasDirectoryAccess(): boolean {
-    return this.directoryHandle !== null;
-  }
-
-  // Save an image file
   static async saveImage(generationId: string, base64Data: string, mimeType: string = 'image/png'): Promise<string> {
-    if (!this.directoryHandle) {
-      throw new Error('No directory selected for saving');
+    const res = await fetch(`${API_BASE}/images/generated`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageId: generationId, dataBase64: base64Data, mimeType }),
+    });
+    if (!res.ok) {
+      throw new Error('Failed to save generated image');
     }
-
-    try {
-      // Create a unique filename
-      const filename = `nano-banana-${generationId}.png`;
-      const fileHandle = await this.directoryHandle.getFileHandle(filename, { create: true });
-
-      // Convert base64 to blob using fetch (more reliable)
-      const response = await fetch(`data:${mimeType};base64,${base64Data}`);
-      const blob = await response.blob();
-
-      // Write the file
-      const writable = await fileHandle.createWritable();
-      await writable.write(blob);
-      await writable.close();
-
-      // Return the relative path for metadata
-      return filename;
-    } catch (error) {
-      console.error('Failed to save image:', error);
-      throw error;
-    }
-  }
-
-  static async ensureInputImagesDirectory(): Promise<FileSystemDirectoryHandle> {
-    if (!this.directoryHandle) {
-      throw new Error('No directory selected');
-    }
-
-    return this.directoryHandle.getDirectoryHandle(this.INPUT_IMAGES_DIR, { create: true });
+    const data = await res.json();
+    return data.filename || '';
   }
 
   static async saveInputImage(file: File, imageId: string): Promise<void> {
-    if (!this.directoryHandle) {
-      throw new Error('No directory selected for saving input images');
+    const base64 = await toBase64(file);
+    const res = await fetch(`${API_BASE}/images/input`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageId, dataBase64: base64, mimeType: file.type || 'image/png' }),
+    });
+    if (!res.ok) {
+      throw new Error('Failed to save input image');
     }
-
-    const inputDir = await this.ensureInputImagesDirectory();
-    const fileHandle = await inputDir.getFileHandle(imageId, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(file);
-    await writable.close();
   }
 
   static async deleteInputImage(imageId: string): Promise<void> {
-    if (!this.directoryHandle) {
-      return;
-    }
-
-    try {
-      const inputDir = await this.ensureInputImagesDirectory();
-      await inputDir.removeEntry(imageId);
-    } catch (error) {
-      console.warn('Failed to delete input image:', error);
-    }
+    await fetch(`${API_BASE}/images/input/${encodeURIComponent(imageId)}`, { method: 'DELETE' });
   }
 
-  static async deleteGeneratedImage(imageId: string): Promise<void> {
-    if (!this.directoryHandle) {
-      return;
-    }
-
-    try {
-      const filename = `nano-banana-${imageId}.png`;
-      await this.directoryHandle.removeEntry(filename);
-    } catch (error) {
-      console.warn('Failed to delete generated image:', error);
-    }
-  }
-
-  private static async loadFileAsBase64(fileHandle: FileSystemFileHandle): Promise<string> {
-    const file = await fileHandle.getFile();
-    const buffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    bytes.forEach((b) => {
-      binary += String.fromCharCode(b);
+  static async deleteGeneratedImage(imageId: string, mimeType: string = 'image/png'): Promise<void> {
+    await fetch(`${API_BASE}/images/generated/${encodeURIComponent(imageId)}?mimeType=${encodeURIComponent(mimeType)}`, {
+      method: 'DELETE',
     });
-    return btoa(binary);
   }
 
-  static async loadImageData(imageId: string, isInputImage: boolean): Promise<string> {
-    if (!this.directoryHandle) {
-      throw new Error('No directory selected');
+  static async loadImageData(imageId: string, isInputImage: boolean, mimeType: string = 'image/png'): Promise<string> {
+    const res = await fetch(
+      `${API_BASE}/images/${encodeURIComponent(imageId)}?type=${isInputImage ? 'input' : 'generated'}&mimeType=${encodeURIComponent(mimeType)}`
+    );
+    if (!res.ok) {
+      throw new Error('Failed to load image data');
     }
-
-    if (isInputImage) {
-      const inputDir = await this.ensureInputImagesDirectory();
-      const fileHandle = await inputDir.getFileHandle(imageId);
-      return this.loadFileAsBase64(fileHandle);
-    }
-
-    const filename = `nano-banana-${imageId}.png`;
-    const fileHandle = await this.directoryHandle.getFileHandle(filename);
-    return this.loadFileAsBase64(fileHandle);
+    const data = await res.json();
+    return data.dataBase64;
   }
 
   static async saveConversations(data: object): Promise<void> {
-    if (!this.directoryHandle) {
-      throw new Error('No directory selected for saving conversations');
+    const res = await fetch(`${API_BASE}/conversations/thread`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error('Failed to save conversation');
     }
-
-    const fileHandle = await this.directoryHandle.getFileHandle(this.CONVERSATIONS_FILE, { create: true });
-    const writable = await fileHandle.createWritable();
-    await writable.write(JSON.stringify(data, null, 2));
-    await writable.close();
   }
 
   static async loadConversations(): Promise<any | null> {
-    if (!this.directoryHandle) {
+    const res = await fetch(`${API_BASE}/conversations`);
+    if (!res.ok) {
       return null;
     }
-
-    try {
-      const fileHandle = await this.directoryHandle.getFileHandle(this.CONVERSATIONS_FILE);
-      const file = await fileHandle.getFile();
-      const text = await file.text();
-      return JSON.parse(text);
-    } catch (error) {
-      console.log('No conversations file yet, starting fresh');
-      return null;
-    }
+    return res.json();
   }
 
-  // Load metadata from file
   static async loadMetadata(): Promise<any[]> {
-    if (!this.directoryHandle) {
-      return [];
-    }
-
-    try {
-      const fileHandle = await this.directoryHandle.getFileHandle(this.METADATA_FILE);
-      const file = await fileHandle.getFile();
-      const content = await file.text();
-      return JSON.parse(content);
-    } catch (error) {
-      // File doesn't exist yet, return empty array
-      console.log('Metadata file not found, starting fresh');
-      return [];
-    }
+    const res = await fetch(`${API_BASE}/metadata`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.items || [];
   }
 
-  // Save metadata to file
   static async saveMetadata(generations: any[]): Promise<void> {
-    if (!this.directoryHandle) {
-      throw new Error('No directory selected for saving');
-    }
-
-    try {
-      const fileHandle = await this.directoryHandle.getFileHandle(this.METADATA_FILE, { create: true });
-      const metadata = JSON.stringify(generations, null, 2);
-
-      const writable = await fileHandle.createWritable();
-      await writable.write(metadata);
-      await writable.close();
-    } catch (error) {
-      console.error('Failed to save metadata:', error);
-      throw error;
+    const res = await fetch(`${API_BASE}/metadata`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: generations }),
+    });
+    if (!res.ok) {
+      throw new Error('Failed to save metadata');
     }
   }
 
-  // Load an image file
   static async loadImage(filename: string): Promise<string> {
-    if (!this.directoryHandle) {
-      throw new Error('No directory selected');
+    const res = await fetch(`${API_BASE}/images/${encodeURIComponent(filename)}?type=generated`);
+    if (!res.ok) {
+      throw new Error('Failed to load image');
     }
-
-    try {
-      const fileHandle = await this.directoryHandle.getFileHandle(filename);
-      const file = await fileHandle.getFile();
-      return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
-    } catch (error) {
-      console.error('Failed to load image:', error);
-      throw error;
-    }
+    const data = await res.json();
+    return `data:${data.mimeType || 'image/png'};base64,${data.dataBase64}`;
   }
 
-  // Delete a generation (image file and update metadata)
   static async deleteGeneration(generationId: string, filename: string): Promise<void> {
-    if (!this.directoryHandle) {
-      return;
-    }
-
-    try {
-      // Delete the image file
-      await this.directoryHandle.removeEntry(filename);
-
-      // Update metadata
-      const generations = await this.loadMetadata();
-      const filtered = generations.filter((gen: any) => gen.id !== generationId);
-      await this.saveMetadata(filtered);
-    } catch (error) {
-      console.error('Failed to delete generation:', error);
-    }
+    await fetch(`${API_BASE}/metadata/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: generationId, filename }),
+    });
   }
 
-  
-
-  // Get directory name for display
-  static getDirectoryName(): string | null {
-    return this.directoryHandle?.name || null;
+  static async saveApiKey(apiKey: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey }),
+    });
+    if (!res.ok) {
+      throw new Error('Failed to store API key');
+    }
+    this.config.apiKey = apiKey;
+    localStorage.setItem('gemini-api-key', apiKey);
   }
 }

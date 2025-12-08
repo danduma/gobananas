@@ -5,6 +5,7 @@ const MAX_THREADS = 50;
 
 export class ConversationStorage {
   static async loadThreads(): Promise<ConversationThread[]> {
+    await FileSystemStorage.init();
     const data = await FileSystemStorage.loadConversations();
     if (!data || !Array.isArray(data.threads)) {
       return [];
@@ -14,11 +15,13 @@ export class ConversationStorage {
   }
 
   static async getThread(threadId: string): Promise<ConversationThread | null> {
+    await FileSystemStorage.init();
     const threads = await this.loadThreads();
     return threads.find((thread) => thread.id === threadId) || null;
   }
 
   static async saveThread(thread: ConversationThread): Promise<void> {
+    await FileSystemStorage.init();
     const threads = await this.loadThreads();
     const index = threads.findIndex((t) => t.id === thread.id);
     if (index >= 0) {
@@ -48,6 +51,7 @@ export class ConversationStorage {
   }
 
   static async deleteThread(threadId: string): Promise<void> {
+    await FileSystemStorage.init();
     const threads = await this.loadThreads();
     const thread = threads.find((t) => t.id === threadId);
 
@@ -60,6 +64,7 @@ export class ConversationStorage {
   }
 
   static async migrateOldGenerations(): Promise<void> {
+    await FileSystemStorage.init();
     const existing = await FileSystemStorage.loadConversations();
     if (existing && existing.version === '2.0') {
       return;
@@ -126,3 +131,4 @@ export class ConversationStorage {
     });
   }
 }
+

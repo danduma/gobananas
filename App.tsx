@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { KeySelector } from './components/KeySelector';
 import { ChatInterface } from './components/ChatInterface';
+import { FileSystemStorage } from './services/fileSystemStorage';
 
 const App: React.FC = () => {
   const [hasKey, setHasKey] = useState<boolean>(false);
@@ -9,6 +10,7 @@ const App: React.FC = () => {
   const checkKey = async () => {
     setChecking(true);
     try {
+      await FileSystemStorage.init();
       const storedKey = localStorage.getItem('gemini-api-key');
       setHasKey(!!storedKey && storedKey.trim().length > 0);
     } catch (e) {

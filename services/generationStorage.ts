@@ -3,6 +3,7 @@ import { FileSystemStorage } from './fileSystemStorage';
 
 export class GenerationStorage {
   static async saveGeneration(config: LegacyGenerationConfig, imageUrl: string, imageData: string): Promise<GeneratedImage> {
+    await FileSystemStorage.init();
     if (!FileSystemStorage.hasDirectoryAccess()) {
       throw new Error('No save directory selected. Please select a directory first.');
     }
@@ -43,6 +44,7 @@ export class GenerationStorage {
 
   static async loadGenerations(): Promise<GeneratedImage[]> {
     try {
+      await FileSystemStorage.init();
       if (!FileSystemStorage.hasDirectoryAccess()) {
         return [];
       }
@@ -77,6 +79,7 @@ export class GenerationStorage {
 
   static async deleteGeneration(id: string): Promise<void> {
     try {
+      await FileSystemStorage.init();
       if (!FileSystemStorage.hasDirectoryAccess()) {
         return;
       }

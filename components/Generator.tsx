@@ -70,6 +70,22 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
   const [keyModalSaving, setKeyModalSaving] = useState(false);
   const [keyModalError, setKeyModalError] = useState('');
 
+  useEffect(() => {
+    const bootstrap = async () => {
+      await FileSystemStorage.init();
+      const dirName = FileSystemStorage.getDirectoryName();
+      if (dirName) {
+        setSaveDirectory(dirName);
+        try {
+          localStorage.setItem('nano-banana-save-directory', dirName);
+        } catch {
+          // ignore
+        }
+      }
+    };
+    bootstrap();
+  }, []);
+
   // Save prompt to localStorage whenever it changes
   useEffect(() => {
     try {
@@ -165,23 +181,17 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
     if (!prompt.trim()) return;
 
     if (!GenerationStorage.isReady()) {
-      if (saveDirectory) {
-        // User had a directory selected before, try to re-select it
-        const success = await FileSystemStorage.selectDirectory();
-        if (!success) {
-          setError('Please select a save folder to continue generating images.');
-          return;
-        }
-        const dirName = FileSystemStorage.getDirectoryName();
-        setSaveDirectory(dirName);
-        try {
-          localStorage.setItem('nano-banana-save-directory', dirName || '');
-        } catch (error) {
-          console.warn('Failed to save directory preference:', error);
-        }
-      } else {
-        setError('Please select a save folder first before generating images.');
+      const success = await FileSystemStorage.selectDirectory();
+      if (!success) {
+        setError('Please select a save folder to continue generating images.');
         return;
+      }
+      const dirName = FileSystemStorage.getDirectoryName();
+      setSaveDirectory(dirName);
+      try {
+        localStorage.setItem('nano-banana-save-directory', dirName || '');
+      } catch (error) {
+        console.warn('Failed to save directory preference:', error);
       }
     }
 

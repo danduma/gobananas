@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, Image as ImageIcon, Loader2, Paperclip, Send, Trash2, Upload } from 'lucide-react';
+import { AlertCircle, Image as ImageIcon, Loader2, Paperclip, Send, Upload, Key } from 'lucide-react';
 import {
+  AspectRatio,
   ConversationMessage,
   ConversationThread,
   GenerationConfig,
+  ImageSize,
   Model,
 } from '../types';
 import { ConversationStorage } from '../services/conversationStorage';
@@ -40,14 +42,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   });
   const [model, setModel] = useState<Model>('gemini-3-pro-image-preview');
   const [temperature, setTemperature] = useState<number>(1);
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
+  const [imageSize, setImageSize] = useState<ImageSize>('1K');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (FileSystemStorage.hasDirectoryAccess()) {
-      initializeThreads();
-    }
+    const bootstrap = async () => {
+      await FileSystemStorage.init();
+      const dirName = FileSystemStorage.getDirectoryName();
+      if (dirName) {
+        setSaveDirectory(dirName);
+        try {
+          localStorage.setItem('nano-banana-save-directory', dirName);
+        } catch {
+          // ignore
+        }
+      }
+      if (FileSystemStorage.hasDirectoryAccess()) {
+        await initializeThreads();
+      }
+    };
+    bootstrap();
   }, []);
 
   useEffect(() => {
@@ -92,7 +109,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     mimeType: string = 'image/png'
   ): Promise<string | undefined> => {
     try {
-      const base64 = await FileSystemStorage.loadImageData(imageId, isInputImage);
+      const base64 = await FileSystemStorage.loadImageData(imageId, isInputImage, mimeType);
       return `data:${mimeType};base64,${base64}`;
     } catch (err) {
       console.warn('Failed to load image data', err);
@@ -173,6 +190,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     setAttachedImages([]);
     setModel('gemini-3-pro-image-preview');
     setTemperature(1);
+    setAspectRatio('1:1');
+    setImageSize('1K');
   };
 
   const handleSelectThread = async (threadId: string) => {
@@ -198,7 +217,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     if (messageInput.trim()) {
       contents.push({
         type: 'text',
-        text: messageInput.trim(),
+        text: `${messageInput.trim()}\n\n[Image settings: aspect ratio ${aspectRatio}, resolution ${imageSize}]`,
+      });
+    } else {
+      contents.push({
+        type: 'text',
+        text: `[Image settings: aspect ratio ${aspectRatio}, resolution ${imageSize}]`,
       });
     }
 
@@ -273,11 +297,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       const generationConfig: GenerationConfig = {
         model: workingThread.model,
         temperature: workingThread.temperature,
+        aspectRatio,
+        imageSize,
       };
 
-      const imageDataUrl = await generateImageFromConversation(workingThread.messages, generationConfig);
-      const mimeMatch = imageDataUrl.match(/data:(.*?);base64/);
-      const mimeType = mimeMatch?.[1] || 'image/png';
+      const { dataUrl: imageDataUrl, mimeType, thoughtSignature } = await generateImageFromConversation(workingThread.messages, generationConfig);
       const base64Data = imageDataUrl.split(',')[1];
       const imageId = createId('gen');
       await FileSystemStorage.saveImage(imageId, base64Data, mimeType);
@@ -292,6 +316,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
             mimeType,
             isInputImage: false,
             url: imageDataUrl,
+            thoughtSignature,
           },
         ],
         timestamp: Date.now(),
@@ -383,10 +408,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
             </button>
             <button
               onClick={onResetKey}
-              className="px-3 py-2 rounded-lg border border-slate-700 hover:border-red-400 text-slate-200 text-sm flex items-center gap-2"
+              className="px-3 py-2 rounded-lg border border-slate-700 hover:border-yellow-400 text-slate-200 text-sm flex items-center gap-2"
             >
-              <Trash2 className="w-4 h-4" />
-              Reset key
+              <Key className="w-4 h-4" />
+              Change key
             </button>
           </div>
         </div>
@@ -404,13 +429,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         )}
 
         <div className="border-t border-slate-800 bg-slate-900/70 px-6 py-4">
-          <div className="flex items-center gap-3 mb-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
             <label className="text-sm text-slate-300 flex items-center gap-2">
               Model
               <select
                 value={model}
                 onChange={(e) => setModel(e.target.value as Model)}
-                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"
+                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 w-full"
               >
                 <option value="gemini-3-pro-image-preview">Gemini 3 Pro Image Preview</option>
                 <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image</option>
@@ -418,63 +443,85 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
             </label>
             <label className="text-sm text-slate-300 flex items-center gap-2">
               Temperature
-              <input
-                type="number"
-                min={0}
-                max={2}
-                step={0.1}
-                value={temperature}
-                onChange={(e) => setTemperature(parseFloat(e.target.value) || 0)}
-                className="w-20 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"
-              />
+              <div className="flex items-center gap-2 w-full">
+                <input
+                  type="range"
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  value={temperature}
+                  onChange={(e) => setTemperature(parseFloat(e.target.value) || 0)}
+                  className="flex-1 accent-yellow-500"
+                />
+                <span className="text-xs text-slate-400 w-10 text-right">{temperature.toFixed(1)}</span>
+              </div>
+            </label>
+            <label className="text-sm text-slate-300 flex items-center gap-2">
+              Aspect ratio
+              <select
+                value={aspectRatio}
+                onChange={(e) => setAspectRatio(e.target.value as AspectRatio)}
+                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 w-full"
+              >
+                <option value="1:1">1:1</option>
+                <option value="16:9">16:9</option>
+                <option value="9:16">9:16</option>
+                <option value="4:3">4:3</option>
+                <option value="3:4">3:4</option>
+              </select>
+            </label>
+            <label className="text-sm text-slate-300 flex items-center gap-2">
+              Resolution
+              <select
+                value={imageSize}
+                onChange={(e) => setImageSize(e.target.value as ImageSize)}
+                className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 w-full"
+              >
+                <option value="1K">1K</option>
+                <option value="2K">2K</option>
+                <option value="4K">4K</option>
+              </select>
             </label>
           </div>
 
           <div className="bg-slate-800 border border-slate-700 rounded-2xl p-3">
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="p-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 flex items-center justify-center"
-                title="Attach images"
-              >
-                <Paperclip className="w-5 h-5" />
-              </button>
-
-              <div className="flex-1">
-                <textarea
-                  value={messageInput}
-                  onChange={(e) => setMessageInput(e.target.value)}
-                  placeholder="Describe the image you want or ask for tweaks..."
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none resize-none"
-                  rows={3}
-                  disabled={isGenerating}
-                />
-                <ImageAttachment files={attachedImages} onRemove={handleRemoveAttachment} />
-              </div>
-
-              <button
-                type="button"
-                onClick={handleSendMessage}
-                disabled={isGenerating || (!messageInput.trim() && attachedImages.length === 0)}
-                className={`p-4 rounded-xl flex items-center justify-center gap-2 font-semibold transition-colors ${
-                  isGenerating || (!messageInput.trim() && attachedImages.length === 0)
-                    ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-                    : 'bg-yellow-500 text-slate-900 hover:bg-yellow-400'
-                }`}
-              >
-                {isGenerating ? (
-                  <>
+            <div className="relative">
+              <textarea
+                value={messageInput}
+                onChange={(e) => setMessageInput(e.target.value)}
+                placeholder="Describe the image you want or ask for tweaks..."
+                className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 pr-28 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none resize-none"
+                rows={3}
+                disabled={isGenerating}
+              />
+              <div className="absolute right-3 bottom-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-10 h-10 rounded-full bg-slate-700 hover:bg-slate-600 text-slate-100 flex items-center justify-center border border-slate-600"
+                  title="Attach images"
+                >
+                  <Paperclip className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSendMessage}
+                  disabled={isGenerating || (!messageInput.trim() && attachedImages.length === 0)}
+                  className={`w-10 h-10 rounded-full flex items-center justify-center border font-semibold transition-colors ${
+                    isGenerating || (!messageInput.trim() && attachedImages.length === 0)
+                      ? 'bg-slate-700 text-slate-400 border-slate-600 cursor-not-allowed'
+                      : 'bg-yellow-500 text-slate-900 border-yellow-400 hover:bg-yellow-400'
+                  }`}
+                  title="Send"
+                >
+                  {isGenerating ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
+                  ) : (
                     <Send className="w-4 h-4" />
-                    Send
-                  </>
-                )}
-              </button>
+                  )}
+                </button>
+              </div>
+              <ImageAttachment files={attachedImages} onRemove={handleRemoveAttachment} />
             </div>
 
             <input
@@ -496,3 +543,4 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     </div>
   );
 };
+

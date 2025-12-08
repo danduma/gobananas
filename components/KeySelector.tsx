@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Key, ExternalLink, Save, Loader2 } from 'lucide-react';
+import { FileSystemStorage } from '../services/fileSystemStorage';
 
 interface KeySelectorProps {
   onKeySelected: () => void;
@@ -10,6 +11,17 @@ export const KeySelector: React.FC<KeySelectorProps> = ({ onKeySelected }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    try {
+      const existing = localStorage.getItem('gemini-api-key');
+      if (existing) {
+        setApiKey(existing);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const handleSaveKey = async () => {
     if (!apiKey.trim()) {
       setError('Please enter an API key');
@@ -19,8 +31,7 @@ export const KeySelector: React.FC<KeySelectorProps> = ({ onKeySelected }) => {
     setIsSaving(true);
     setError('');
     try {
-      // Store the API key in localStorage
-      localStorage.setItem('gemini-api-key', apiKey.trim());
+      await FileSystemStorage.saveApiKey(apiKey.trim());
       onKeySelected();
     } catch (error) {
       console.error("Failed to save API key", error);
