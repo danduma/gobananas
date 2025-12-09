@@ -22,7 +22,7 @@ High-quality image generation using the Nano Banana Pro or Nano Banana OG. Creat
 
 3. **Run the development server:**
    ```bash
-   npm run dev
+   npm run dev:all
    ```
 
 4. **Set up your API key:**
