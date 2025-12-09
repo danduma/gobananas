@@ -36,3 +36,5 @@ export const ImageAttachment: React.FC<ImageAttachmentProps> = ({ files, onRemov
     </div>
   );
 };
+
+

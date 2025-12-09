@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5174/api';
+const API_BASE = import.meta.env.VITE_API_BASE || '/api';
 
 const toBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -35,6 +35,7 @@ export class FileSystemStorage {
       }
     } catch (error) {
       console.warn('Could not refresh storage config', error);
+      this.config = { storagePath: null, apiKey: localStorage.getItem('gemini-api-key') || null };
     }
   }
 
@@ -120,6 +121,9 @@ export class FileSystemStorage {
     const res = await fetch(
       `${API_BASE}/images/${encodeURIComponent(imageId)}?type=${isInputImage ? 'input' : 'generated'}&mimeType=${encodeURIComponent(mimeType)}`
     );
+    if (res.status === 404) {
+      return '';
+    }
     if (!res.ok) {
       throw new Error('Failed to load image data');
     }

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
+    "better-sqlite3": "^12.5.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "lucide-react": "^0.555.0",

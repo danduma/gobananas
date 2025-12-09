@@ -69,6 +69,7 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
   const [newApiKey, setNewApiKey] = useState('');
   const [keyModalSaving, setKeyModalSaving] = useState(false);
   const [keyModalError, setKeyModalError] = useState('');
+  const [selectingFolder, setSelectingFolder] = useState(false);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -107,17 +108,23 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
   };
 
   const handleSelectDirectory = async () => {
-    const success = await FileSystemStorage.selectDirectory();
-    if (success) {
-      const dirName = FileSystemStorage.getDirectoryName();
-      setSaveDirectory(dirName);
-      try {
-        localStorage.setItem('nano-banana-save-directory', dirName || '');
-      } catch (error) {
-        console.warn('Failed to save directory preference:', error);
+    if (selectingFolder) return;
+    setSelectingFolder(true);
+    try {
+      const success = await FileSystemStorage.selectDirectory();
+      if (success) {
+        const dirName = FileSystemStorage.getDirectoryName();
+        setSaveDirectory(dirName);
+        try {
+          localStorage.setItem('nano-banana-save-directory', dirName || '');
+        } catch (error) {
+          console.warn('Failed to save directory preference:', error);
+        }
+        // Refresh sidebar to load existing generations from the folder
+        setSidebarRefreshTrigger(prev => prev + 1);
       }
-      // Refresh sidebar to load existing generations from the folder
-      setSidebarRefreshTrigger(prev => prev + 1);
+    } finally {
+      setSelectingFolder(false);
     }
   };
 
@@ -318,9 +325,19 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
               <button
                 type="button"
                 onClick={handleSelectDirectory}
-                className="text-slate-400 hover:text-white transition-colors underline text-xs"
+                disabled={selectingFolder}
+                className={`text-xs underline transition-colors flex items-center gap-1 ${
+                  selectingFolder ? 'text-slate-600 cursor-wait' : 'text-slate-400 hover:text-white'
+                }`}
               >
-                {FileSystemStorage.hasDirectoryAccess() ? 'Change' : 'Select'}
+                {selectingFolder ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Opening...
+                  </>
+                ) : FileSystemStorage.hasDirectoryAccess()
+                  ? 'Change'
+                  : 'Select'}
               </button>
             </div>
 
