@@ -45,6 +45,10 @@ export class FileSystemStorage {
     this.initialized = true;
   }
 
+  static getApiKey(): string | null {
+    return this.config.apiKey ?? localStorage.getItem('gemini-api-key') ?? null;
+  }
+
   static hasDirectoryAccess(): boolean {
     return Boolean(this.config.storagePath);
   }

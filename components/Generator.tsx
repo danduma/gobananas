@@ -57,6 +57,13 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
       return null;
     }
   });
+  const [hasApiKey, setHasApiKey] = useState<boolean>(() => {
+    try {
+      return Boolean(localStorage.getItem('gemini-api-key'));
+    } catch {
+      return false;
+    }
+  });
   const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
@@ -70,11 +77,14 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
   const [keyModalSaving, setKeyModalSaving] = useState(false);
   const [keyModalError, setKeyModalError] = useState('');
   const [selectingFolder, setSelectingFolder] = useState(false);
+  const [directoryError, setDirectoryError] = useState<string | null>(null);
 
   useEffect(() => {
     const bootstrap = async () => {
       await FileSystemStorage.init();
       const dirName = FileSystemStorage.getDirectoryName();
+      const apiKey = FileSystemStorage.getApiKey();
+      setHasApiKey(Boolean(apiKey));
       if (dirName) {
         setSaveDirectory(dirName);
         try {
@@ -82,6 +92,9 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
         } catch {
           // ignore
         }
+      }
+      if (!dirName || !apiKey) {
+        setShowKeyModal(true);
       }
     };
     bootstrap();
@@ -109,6 +122,12 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
 
   const handleSelectDirectory = async () => {
     if (selectingFolder) return;
+    if (!hasApiKey) {
+      setShowKeyModal(true);
+      setDirectoryError('Add your API key before choosing a folder.');
+      return;
+    }
+    setDirectoryError(null);
     setSelectingFolder(true);
     try {
       const success = await FileSystemStorage.selectDirectory();
@@ -122,7 +141,12 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
         }
         // Refresh sidebar to load existing generations from the folder
         setSidebarRefreshTrigger(prev => prev + 1);
+      } else {
+        setDirectoryError('Folder picker failed. Make sure the server is running and allow the prompt.');
       }
+    } catch (err) {
+      console.error('Folder selection error:', err);
+      setDirectoryError('Could not open the folder picker. Check the server console.');
     } finally {
       setSelectingFolder(false);
     }
@@ -156,6 +180,7 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
       // Store the new API key in localStorage
       localStorage.setItem('gemini-api-key', newApiKey.trim());
       setShowKeyModal(false);
+      setHasApiKey(true);
       // Show a brief success message or just close the modal
     } catch (error) {
       console.error("Failed to save API key", error);
@@ -187,9 +212,16 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
     e.preventDefault();
     if (!prompt.trim()) return;
 
+    if (!hasApiKey) {
+      setShowKeyModal(true);
+      setError('Enter your API key to generate images.');
+      return;
+    }
+
     if (!GenerationStorage.isReady()) {
       const success = await FileSystemStorage.selectDirectory();
       if (!success) {
+        setDirectoryError('Please select a save folder to continue generating images.');
         setError('Please select a save folder to continue generating images.');
         return;
       }
@@ -340,6 +372,9 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
                   : 'Select'}
               </button>
             </div>
+            {directoryError && (
+              <p className="text-xs text-red-400 mt-1">{directoryError}</p>
+            )}
 
             <div className="space-y-4">
               <div className="space-y-2">
