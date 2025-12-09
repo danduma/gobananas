@@ -156,8 +156,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     };
   };
 
-  const ensureDirectoryAccess = async () => {
-    if (FileSystemStorage.hasDirectoryAccess()) return true;
+  const ensureDirectoryAccess = async (forcePick = false) => {
+    // When the user explicitly clicks "Change folder" we want to force the picker
+    // even if we already have a directory saved.
+    if (!forcePick && FileSystemStorage.hasDirectoryAccess()) return true;
+
     const success = await FileSystemStorage.selectDirectory();
     if (success) {
       const dirName = FileSystemStorage.getDirectoryName();
@@ -176,7 +179,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     if (selectingFolder) return;
     setSelectingFolder(true);
     try {
-      await ensureDirectoryAccess();
+      await ensureDirectoryAccess(true);
     } finally {
       setSelectingFolder(false);
     }
@@ -617,4 +620,3 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     </div>
   );
 };
-
