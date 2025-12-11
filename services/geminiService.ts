@@ -203,7 +203,8 @@ export const generateImageFromConversation = async (
 
   const send = async (history: ConversationMessage[]) => {
     const geminiMessages = await formatMessagesForGemini(history);
-    const response = await ai.models.generateContent({
+    // SDK typings don’t expose imageConfig yet; cast request to any.
+    const request: any = {
       model: config.model,
       contents: geminiMessages,
       generationConfig: {
@@ -216,7 +217,8 @@ export const generateImageFromConversation = async (
       thinkingConfig: {
         includeThoughts: true,
       },
-    });
+    };
+    const response = await ai.models.generateContent(request);
     try {
       const normalized = (response as any)?.response ?? response;
       return extractImageData(normalized);
