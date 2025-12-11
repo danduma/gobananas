@@ -67,23 +67,82 @@ const isContextLimitError = (error: any) => {
   return message.toLowerCase().includes('token') || message.toLowerCase().includes('context');
 };
 
+const formatBlockReason = (reason?: string) => {
+  if (!reason || reason === 'BLOCK_REASON_UNSPECIFIED') return null;
+  const normalized = reason.toUpperCase();
+  switch (normalized) {
+    case 'SAFETY':
+      return 'blocked by Gemini safety filters';
+    case 'OTHER':
+      return 'blocked by Gemini for an unspecified policy reason';
+    default:
+      return `blocked: ${normalized.replace(/_/g, ' ').toLowerCase()}`;
+  }
+};
+
+const getBlockMessage = (response: any): string | null => {
+  const promptFeedback = response?.promptFeedback;
+  const finishReason = response?.candidates?.[0]?.finishReason;
+  const firstCandidate = response?.candidates?.[0];
+
+  // Prefer explicit blockReason, then finishReason if it signals blocking.
+  const reason =
+    promptFeedback?.blockReason ||
+    (typeof finishReason === 'string' && finishReason.toUpperCase() !== 'STOP' ? finishReason : null);
+  const friendly = formatBlockReason(reason);
+
+  // If we have promptFeedback but no explicit block reason, still surface it
+  if (!friendly && !promptFeedback) return null;
+
+  const safetyCategories = Array.isArray(promptFeedback?.safetyRatings)
+    ? promptFeedback.safetyRatings
+        .map((rating: any) => rating?.category)
+        .filter(Boolean)
+    : [];
+
+  const candidateCategories = Array.isArray(firstCandidate?.safetyRatings)
+    ? firstCandidate.safetyRatings.map((rating: any) => rating?.category).filter(Boolean)
+    : [];
+
+  const mergedCategories = [...new Set([...safetyCategories, ...candidateCategories])];
+
+  const categoryText = mergedCategories.length ? ` (${mergedCategories.join(', ')})` : '';
+
+  const base = friendly || 'model response blocked by Gemini';
+  return `${base}${categoryText}. Please adjust the prompt or remove sensitive content.`;
+};
+
 const formatMessagesForGemini = async (messages: ConversationMessage[]) => {
   return Promise.all(messages.map(async (msg) => {
-    const parts = await Promise.all(msg.content.map(async (content) => {
+    const parts: any[] = [];
+
+    for (const content of msg.content) {
       if (content.type === 'text') {
-        const part: any = { text: content.text };
-        return part;
+        parts.push({ text: content.text });
+        continue;
       }
 
-      const base64Data = await FileSystemStorage.loadImageData(content.imageId, content.isInputImage);
-      const part: any = {
+      const base64Data = await FileSystemStorage.loadImageData(
+        content.imageId,
+        content.isInputImage,
+        content.mimeType
+      );
+
+      if (!base64Data) {
+        // Skip missing image data but keep some context
+        parts.push({
+          text: '[image unavailable in history]',
+        });
+        continue;
+      }
+
+      parts.push({
         inlineData: {
           mimeType: content.mimeType,
           data: base64Data,
         },
-      };
-      return part;
-    }));
+      });
+    }
 
     return {
       role: msg.role === 'user' ? 'user' : 'model',
@@ -94,6 +153,11 @@ const formatMessagesForGemini = async (messages: ConversationMessage[]) => {
 
 const extractImageData = (response: any): { dataUrl: string; mimeType: string; thoughtSummaries?: string[] } => {
   const thoughtSummaries: string[] = [];
+
+  const blockMessage = getBlockMessage(response);
+  if (blockMessage) {
+    throw new Error(blockMessage);
+  }
 
   if (response?.candidates && response.candidates.length > 0) {
     const parts = response.candidates[0].content?.parts || [];
@@ -115,7 +179,15 @@ const extractImageData = (response: any): { dataUrl: string; mimeType: string; t
     }
   }
 
-  throw new Error('No image data found in response');
+  // If prompt feedback exists but no image, surface that context instead of a generic error.
+  if (response?.promptFeedback) {
+    const msg =
+      getBlockMessage(response) ||
+      'Model did not return image data. The prompt may have been blocked or filtered.';
+    throw new Error(msg);
+  }
+
+  throw new Error('Model did not return image data. Try a different prompt/model or try again.');
 };
 
 export const generateImageFromConversation = async (
@@ -131,7 +203,7 @@ export const generateImageFromConversation = async (
 
   const send = async (history: ConversationMessage[]) => {
     const geminiMessages = await formatMessagesForGemini(history);
-      const response = await ai.models.generateContent({
+    const response = await ai.models.generateContent({
       model: config.model,
       contents: geminiMessages,
       generationConfig: {
@@ -145,7 +217,16 @@ export const generateImageFromConversation = async (
         includeThoughts: true,
       },
     });
-    return extractImageData(response);
+    try {
+      const normalized = (response as any)?.response ?? response;
+      return extractImageData(normalized);
+    } catch (err) {
+      // Preserve explicit block errors, fallback to generic image-missing guidance
+      if (err instanceof Error && err.message) {
+        throw err;
+      }
+      throw new Error('Model did not return image data. Try a different prompt/model or try again.');
+    }
   };
 
   try {

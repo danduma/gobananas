@@ -188,19 +188,42 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   const addImageAttachments = (files: File[]) => {
     const images = files.filter((file) => file.type.startsWith('image/'));
     if (images.length === 0) return;
-    setAttachedImages((prev) => [...prev, ...images]);
+
+    setAttachedImages((prev) => {
+      const seen = new Set(prev.map((file) => `${file.name}-${file.size}-${file.lastModified}`));
+      const nextImages: File[] = [];
+
+      for (const file of images) {
+        const key = `${file.name}-${file.size}-${file.lastModified}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        nextImages.push(file);
+      }
+
+      return nextImages.length ? [...prev, ...nextImages] : prev;
+    });
+  };
+
+  const extractImages = (fileList?: FileList | null, items?: DataTransferItemList | null) => {
+    const fromFiles = fileList ? Array.from(fileList) : [];
+    const fromItems =
+      items
+        ? Array.from(items)
+            .map((item) => (item.kind === 'file' ? item.getAsFile() : null))
+            .filter((file): file is File => Boolean(file))
+        : [];
+    return [...fromFiles, ...fromItems];
   };
 
   const handleFilesSelected = (files: FileList | null) => {
     if (!files) return;
-    addImageAttachments(Array.from(files));
+    addImageAttachments(extractImages(files));
   };
 
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = Array.from(event.clipboardData?.items || []);
-    const images = items
-      .map((item) => (item.kind === 'file' ? item.getAsFile() : null))
-      .filter((file): file is File => Boolean(file && file.type.startsWith('image/')));
+    const images = extractImages(event.clipboardData?.files, event.clipboardData?.items).filter((file) =>
+      file.type.startsWith('image/')
+    );
     if (images.length > 0) {
       event.preventDefault();
       addImageAttachments(images);
@@ -214,7 +237,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    handleFilesSelected(event.dataTransfer.files);
+    const images = extractImages(event.dataTransfer.files, event.dataTransfer.items).filter((file) =>
+      file.type.startsWith('image/')
+    );
+    addImageAttachments(images);
   };
 
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
@@ -404,6 +430,191 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     }
   };
 
+  const getThumbnailFromMessages = (
+    messages: ConversationMessage[],
+    fallbackId?: string,
+    fallbackUrl?: string
+  ) => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const msg = messages[i];
+      for (const content of msg.content) {
+        if (content.type === 'image' && !content.isInputImage) {
+          return {
+            thumbnailImageId: content.imageId,
+            thumbnailUrl: content.url,
+          };
+        }
+      }
+    }
+    return {
+      thumbnailImageId: fallbackId,
+      thumbnailUrl: fallbackUrl,
+    };
+  };
+
+  const handleForkThread = async (messageId: string) => {
+    if (!currentThread) return;
+
+    const hasAccess = await ensureDirectoryAccess();
+    if (!hasAccess) {
+      setError('Please select a save folder to continue.');
+      return;
+    }
+
+    const messageIndex = currentThread.messages.findIndex((msg) => msg.id === messageId);
+    if (messageIndex === -1) return;
+
+    const forkMessages: ConversationMessage[] = currentThread.messages
+      .slice(0, messageIndex + 1)
+      .map((msg) => ({
+        ...msg,
+        content: msg.content.map((item) => ({ ...item })),
+      }));
+
+    const now = Date.now();
+    const { thumbnailImageId, thumbnailUrl } = getThumbnailFromMessages(
+      forkMessages,
+      currentThread.thumbnailImageId,
+      currentThread.thumbnailUrl
+    );
+    const preview = getLastTextPreview({
+      ...currentThread,
+      messages: forkMessages,
+    });
+
+    const forkedThread: ThreadWithUi = {
+      id: createId('thread'),
+      messages: forkMessages,
+      createdAt: now,
+      updatedAt: now,
+      model: currentThread.model,
+      temperature: currentThread.temperature,
+      thumbnailImageId,
+      thumbnailUrl,
+      lastMessagePreview: preview,
+    };
+
+    await persistThread(forkedThread);
+    setCurrentThread(forkedThread);
+    setMessageInput('');
+    setAttachedImages([]);
+  };
+
+  const handleRerunFromMessage = async (messageId: string) => {
+    if (!currentThread) return;
+
+    const messageIndex = currentThread.messages.findIndex((msg) => msg.id === messageId);
+    if (messageIndex === -1) return;
+
+    const targetMessage = currentThread.messages[messageIndex];
+    if (targetMessage.role !== 'user') return;
+
+    const hasAccess = await ensureDirectoryAccess();
+    if (!hasAccess) {
+      setError('Please select a save folder to continue.');
+      return;
+    }
+
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      const truncatedMessages: ConversationMessage[] = currentThread.messages
+        .slice(0, messageIndex + 1)
+        .map((msg) => ({
+          ...msg,
+          content: msg.content.map((item) => ({ ...item })),
+        }));
+
+      const now = Date.now();
+      const { thumbnailImageId, thumbnailUrl } = getThumbnailFromMessages(
+        truncatedMessages,
+        currentThread.thumbnailImageId,
+        currentThread.thumbnailUrl
+      );
+      const preview = getLastTextPreview({
+        ...currentThread,
+        messages: truncatedMessages,
+      });
+
+      const baseThread: ThreadWithUi = {
+        ...currentThread,
+        messages: truncatedMessages,
+        updatedAt: now,
+        thumbnailImageId,
+        thumbnailUrl,
+        lastMessagePreview: preview,
+      };
+
+      await persistThread(baseThread);
+      setCurrentThread(baseThread);
+
+      const generationConfig: GenerationConfig = {
+        model: baseThread.model,
+        temperature: baseThread.temperature,
+        aspectRatio,
+        imageSize,
+      };
+
+      const { dataUrl, mimeType, thoughtSummaries } = await generateImageFromConversation(
+        baseThread.messages,
+        generationConfig
+      );
+      const base64Data = dataUrl.split(',')[1];
+      const imageId = createId('gen');
+      await FileSystemStorage.saveImage(imageId, base64Data, mimeType);
+
+      const assistantMessage: ConversationMessage = {
+        id: createId('msg'),
+        role: 'assistant',
+        content: [
+          {
+            type: 'image',
+            imageId,
+            mimeType,
+            isInputImage: false,
+            url: dataUrl,
+            thoughtSummaries,
+          },
+        ],
+        timestamp: Date.now(),
+      };
+
+      const updatedMessages = [...baseThread.messages, assistantMessage];
+      const thumbFromUpdated = getThumbnailFromMessages(
+        updatedMessages,
+        baseThread.thumbnailImageId,
+        baseThread.thumbnailUrl
+      );
+      const updatedThread: ThreadWithUi = {
+        ...baseThread,
+        messages: updatedMessages,
+        updatedAt: Date.now(),
+        thumbnailImageId: thumbFromUpdated.thumbnailImageId,
+        thumbnailUrl: thumbFromUpdated.thumbnailUrl,
+        lastMessagePreview:
+          getLastTextPreview({
+            ...baseThread,
+            messages: updatedMessages,
+          }) || preview,
+      };
+
+      await persistThread(updatedThread);
+      setCurrentThread(updatedThread);
+      setMessageInput('');
+      setAttachedImages([]);
+    } catch (err: any) {
+      if (err?.name === 'APIKeyError') {
+        onResetKey();
+        return;
+      }
+      console.error(err);
+      setError(err?.message || 'Failed to regenerate from this message.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const renderMessages = () => {
     if (!currentThread || currentThread.messages.length === 0) {
       return (
@@ -420,7 +631,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     return (
       <div className="space-y-6">
         {currentThread.messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+          <MessageBubble
+            key={message.id}
+            message={message}
+            onFork={handleForkThread}
+            onRerun={handleRerunFromMessage}
+          />
         ))}
         {isGenerating && (
           <div className="flex justify-start w-full">

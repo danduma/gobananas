@@ -1,28 +1,70 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Download } from 'lucide-react';
+import { ChevronDown, ChevronUp, Download, MoreVertical } from 'lucide-react';
 import { ConversationMessage } from '../types';
 
 interface MessageBubbleProps {
   message: ConversationMessage;
+  onFork: (messageId: string) => void;
+  onRerun: (messageId: string) => void;
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
+export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onFork, onRerun }) => {
   const isUser = message.role === 'user';
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const toggleThoughts = (id: string) => {
     setExpandedThoughts((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} w-full`}>
+    <div
+      className={`flex ${isUser ? 'justify-end' : 'justify-start'} w-full`}
+      onMouseLeave={() => setMenuOpen(false)}
+    >
       <div
-        className={`max-w-3xl rounded-2xl p-4 shadow-lg border ${
+        className={`relative max-w-3xl rounded-2xl p-4 shadow-lg border ${
           isUser
             ? 'bg-yellow-500/10 border-yellow-400/30 text-yellow-100'
             : 'bg-slate-800 border-slate-700 text-slate-50'
         }`}
       >
+        <div className="absolute top-2 right-2">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((prev) => !prev)}
+            className="p-1.5 rounded-full hover:bg-slate-700/50 text-slate-300"
+            aria-label="Message actions"
+          >
+            <MoreVertical className="w-4 h-4" />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 mt-2 w-40 rounded-lg border border-slate-700 bg-slate-900 shadow-lg z-10">
+              <button
+                type="button"
+                onClick={() => {
+                  onFork(message.id);
+                  setMenuOpen(false);
+                }}
+                className="w-full text-left px-3 py-2 text-sm text-slate-100 hover:bg-slate-800 rounded-t-lg"
+              >
+                Fork from here
+              </button>
+              {isUser && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onRerun(message.id);
+                    setMenuOpen(false);
+                  }}
+                  className="w-full text-left px-3 py-2 text-sm text-slate-100 hover:bg-slate-800 rounded-b-lg"
+                >
+                  Re-run from here
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <div className="space-y-3">
           {message.content.map((content, idx) => {
             if (content.type === 'text') {
