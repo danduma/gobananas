@@ -254,9 +254,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   };
 
   const handleSelectThread = async (threadId: string) => {
+    // We allow selecting any thread, even if it is generating.
+    // The previous check or concern about overwriting state is handled by the functional updates
+    // in handleSendMessage and the safety check in the finally block.
+    
     const stored = await ConversationStorage.getThread(threadId);
     if (!stored) return;
     const hydrated = await hydrateThread(stored);
+    
     setCurrentThread(hydrated);
     setModel(hydrated.model);
     setTemperature(hydrated.temperature);
@@ -362,6 +367,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         return prev;
       });
 
+      // Clear input immediately after sending
+      setMessageInput('');
+      setAttachedImages([]);
+
       setThreads((prev) => {
         const existingIndex = prev.findIndex((t) => t.id === workingThread.id);
         if (existingIndex >= 0) {
@@ -423,8 +432,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
 
       await persistThread(updatedThread);
       setCurrentThread((prev) => (prev?.id === updatedThread.id ? updatedThread : prev));
-      setMessageInput('');
-      setAttachedImages([]);
     } catch (err: any) {
       if (err?.name === 'APIKeyError') {
         onResetKey();
@@ -438,6 +445,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         next.delete(threadId);
         return next;
       });
+      // If we are still viewing this thread, ensure we have the latest version
+      // This helps if the user switched away and back while generating
+      if (currentThread?.id === threadId) {
+        const stored = await ConversationStorage.getThread(threadId);
+        if (stored) {
+           const hydrated = await hydrateThread(stored);
+           setCurrentThread(hydrated);
+        }
+      }
     }
   };
 
@@ -567,7 +583,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     if (!currentThread) return;
 
     const threadId = currentThread.id;
-    if (generatingThreadIds.has(threadId)) return;
+    // Removed blocking check here to allow re-selection of the active thread if needed
+    // if (generatingThreadIds.has(threadId)) return;
 
     const messageIndex = currentThread.messages.findIndex((msg) => msg.id === messageId);
     if (messageIndex === -1) return;
@@ -667,8 +684,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
 
       await persistThread(updatedThread);
       setCurrentThread((prev) => (prev?.id === updatedThread.id ? updatedThread : prev));
-      setMessageInput('');
-      setAttachedImages([]);
     } catch (err: any) {
       if (err?.name === 'APIKeyError') {
         onResetKey();
@@ -682,6 +697,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         next.delete(threadId);
         return next;
       });
+      // If we are still viewing this thread, ensure we have the latest version
+      if (currentThread?.id === threadId) {
+        const stored = await ConversationStorage.getThread(threadId);
+        if (stored) {
+           const hydrated = await hydrateThread(stored);
+           setCurrentThread(hydrated);
+        }
+      }
     }
   };
 
