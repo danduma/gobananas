@@ -31,7 +31,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   const [attachedImages, setAttachedImages] = useState<File[]>([]);
   const [threads, setThreads] = useState<ThreadWithUi[]>([]);
   const [currentThread, setCurrentThread] = useState<ThreadWithUi | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatingThreadIds, setGeneratingThreadIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [saveDirectory, setSaveDirectory] = useState<string | null>(() => {
     try {
@@ -322,7 +322,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   };
 
   const handleSendMessage = async () => {
-    if (isGenerating) return;
+    const threadId = currentThread?.id || createId('thread');
+
+    if (generatingThreadIds.has(threadId)) return;
     if (!messageInput.trim() && attachedImages.length === 0) return;
 
     const hasAccess = await ensureDirectoryAccess();
@@ -331,7 +333,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       return;
     }
 
-    setIsGenerating(true);
+    setGeneratingThreadIds((prev) => new Set(prev).add(threadId));
     setError(null);
 
     try {
@@ -340,7 +342,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       const baseThread: ConversationThread = currentThread
         ? currentThread
         : {
-            id: createId('thread'),
+            id: threadId,
             messages: [],
             createdAt: Date.now(),
             updatedAt: Date.now(),
@@ -354,7 +356,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       };
 
       // Immediately reflect the new user message and hide the empty-state placeholder
-      setCurrentThread(workingThread);
+      setCurrentThread((prev) => {
+        if (!prev) return workingThread;
+        if (prev.id === workingThread.id) return workingThread;
+        return prev;
+      });
+
       setThreads((prev) => {
         const existingIndex = prev.findIndex((t) => t.id === workingThread.id);
         if (existingIndex >= 0) {
@@ -415,7 +422,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       };
 
       await persistThread(updatedThread);
-      setCurrentThread(updatedThread);
+      setCurrentThread((prev) => (prev?.id === updatedThread.id ? updatedThread : prev));
       setMessageInput('');
       setAttachedImages([]);
     } catch (err: any) {
@@ -426,7 +433,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       console.error(err);
       setError(err?.message || 'Failed to generate image.');
     } finally {
-      setIsGenerating(false);
+      setGeneratingThreadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(threadId);
+        return next;
+      });
     }
   };
 
@@ -503,6 +514,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   const handleRerunFromMessage = async (messageId: string) => {
     if (!currentThread) return;
 
+    const threadId = currentThread.id;
+    if (generatingThreadIds.has(threadId)) return;
+
     const messageIndex = currentThread.messages.findIndex((msg) => msg.id === messageId);
     if (messageIndex === -1) return;
 
@@ -515,7 +529,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       return;
     }
 
-    setIsGenerating(true);
+    setGeneratingThreadIds((prev) => new Set(prev).add(threadId));
     setError(null);
 
     try {
@@ -547,7 +561,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       };
 
       await persistThread(baseThread);
-      setCurrentThread(baseThread);
+      setCurrentThread((prev) => (prev?.id === baseThread.id ? baseThread : prev));
 
       const generationConfig: GenerationConfig = {
         model: baseThread.model,
@@ -600,7 +614,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       };
 
       await persistThread(updatedThread);
-      setCurrentThread(updatedThread);
+      setCurrentThread((prev) => (prev?.id === updatedThread.id ? updatedThread : prev));
       setMessageInput('');
       setAttachedImages([]);
     } catch (err: any) {
@@ -611,7 +625,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       console.error(err);
       setError(err?.message || 'Failed to regenerate from this message.');
     } finally {
-      setIsGenerating(false);
+      setGeneratingThreadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(threadId);
+        return next;
+      });
     }
   };
 
@@ -638,7 +656,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
             onRerun={handleRerunFromMessage}
           />
         ))}
-        {isGenerating && (
+        {currentThread && generatingThreadIds.has(currentThread.id) && (
           <div className="flex justify-start w-full">
             <div className="max-w-3xl rounded-2xl p-4 shadow-lg border bg-slate-800 border-slate-700 text-slate-50 flex items-center gap-3">
               <Loader2 className="w-4 h-4 animate-spin text-yellow-400" />
@@ -649,6 +667,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       </div>
     );
   };
+
+  const isCurrentThreadGenerating = currentThread ? generatingThreadIds.has(currentThread.id) : false;
 
   return (
     <div
@@ -785,7 +805,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
                 placeholder="Describe the image you want or ask for tweaks..."
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 pr-28 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none resize-none"
                 rows={3}
-                disabled={isGenerating}
+                disabled={isCurrentThreadGenerating}
               />
               <div className="absolute right-3 bottom-3 flex gap-2">
                 <button
@@ -799,15 +819,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
                 <button
                   type="button"
                   onClick={handleSendMessage}
-                  disabled={isGenerating || (!messageInput.trim() && attachedImages.length === 0)}
+                  disabled={isCurrentThreadGenerating || (!messageInput.trim() && attachedImages.length === 0)}
                   className={`w-10 h-10 rounded-full flex items-center justify-center border font-semibold transition-colors ${
-                    isGenerating || (!messageInput.trim() && attachedImages.length === 0)
+                    isCurrentThreadGenerating || (!messageInput.trim() && attachedImages.length === 0)
                       ? 'bg-slate-700 text-slate-400 border-slate-600 cursor-not-allowed'
                       : 'bg-yellow-500 text-slate-900 border-yellow-400 hover:bg-yellow-400'
                   }`}
                   title="Send"
                 >
-                  {isGenerating ? (
+                  {isCurrentThreadGenerating ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
                     <Send className="w-4 h-4" />
