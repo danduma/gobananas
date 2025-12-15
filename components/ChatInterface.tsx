@@ -475,6 +475,58 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     const messageIndex = currentThread.messages.findIndex((msg) => msg.id === messageId);
     if (messageIndex === -1) return;
 
+    // If forking from the very first message, we treat it as "Edit & Resend"
+    // by populating the input fields and resetting to a new thread state.
+    if (messageIndex === 0) {
+      const message = currentThread.messages[0];
+      if (message.role === 'user') {
+        // Extract text
+        const textContent = message.content.find((c) => c.type === 'text');
+        if (textContent && textContent.type === 'text') {
+          // Remove the appended settings string to restore original prompt
+          const cleanText = textContent.text.replace(/\n\n\[Image settings: .*\]$/, '');
+          setMessageInput(cleanText);
+        } else {
+          setMessageInput('');
+        }
+
+        // Extract images and convert to Files
+        const imageItems = message.content.filter((c) => c.type === 'image');
+        const files: File[] = [];
+
+        for (const item of imageItems) {
+          if (item.type !== 'image') continue;
+
+          try {
+            let base64 = '';
+            if (item.url && item.url.startsWith('data:')) {
+              base64 = item.url.split(',')[1];
+            } else {
+              base64 = await FileSystemStorage.loadImageData(item.imageId, item.isInputImage, item.mimeType);
+            }
+
+            if (base64) {
+              const byteCharacters = atob(base64);
+              const byteNumbers = new Array(byteCharacters.length);
+              for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+              }
+              const byteArray = new Uint8Array(byteNumbers);
+              const blob = new Blob([byteArray], { type: item.mimeType });
+              const file = new File([blob], item.imageId, { type: item.mimeType });
+              files.push(file);
+            }
+          } catch (err) {
+            console.warn('Failed to load image for forking', err);
+          }
+        }
+
+        setAttachedImages(files);
+        setCurrentThread(null); // Switch to "New Conversation" mode
+        return;
+      }
+    }
+
     const forkMessages: ConversationMessage[] = currentThread.messages
       .slice(0, messageIndex + 1)
       .map((msg) => ({
