@@ -176,7 +176,6 @@ const extractImageData = (response: any): MessageContent[] => {
 
   if (response?.candidates && response.candidates.length > 0) {
     const parts = response.candidates[0].content?.parts || [];
-    console.log('Gemini Response Parts:', JSON.stringify(parts, null, 2));
     const accumulatedThoughts: string[] = [];
     // If the first part has a signature, we can use it as a fallback for subsequent parts if missing
     let fallbackSignature: string | undefined;
@@ -186,12 +185,6 @@ const extractImageData = (response: any): MessageContent[] => {
       // The API returns 'thought_signature' in JSON, but some SDKs might normalize it.
       // We check both snake_case and camelCase.
       const signature = (part as any).thought_signature || (part as any).thoughtSignature;
-      
-      if (signature) {
-        console.log('Found signature in part:', signature);
-      } else {
-        console.warn('Part missing signature:', part);
-      }
     
       if (part.text) {
         const isThought = part.thought || !!signature; // Treat as thought if marked or has signature
