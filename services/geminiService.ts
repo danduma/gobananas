@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { ConversationMessage, GenerationConfig, LegacyGenerationConfig } from '../types';
+import { ConversationMessage, GenerationConfig, LegacyGenerationConfig, MessageContent } from '../types';
 import { FileSystemStorage } from './fileSystemStorage';
 
 export class APIKeyError extends Error {
@@ -118,7 +118,15 @@ const formatMessagesForGemini = async (messages: ConversationMessage[]) => {
 
     for (const content of msg.content) {
       if (content.type === 'text') {
-        parts.push({ text: content.text });
+        const part: any = { text: content.text };
+        if (content.isThought) {
+          part.thought = true;
+        }
+        // ALWAYS attach the signature if we have it
+        if (content.thoughtSignature) {
+          part.thoughtSignature = content.thoughtSignature;
+        }
+        parts.push(part);
         continue;
       }
 
@@ -136,12 +144,19 @@ const formatMessagesForGemini = async (messages: ConversationMessage[]) => {
         continue;
       }
 
-      parts.push({
+      const imagePart: any = {
         inlineData: {
           mimeType: content.mimeType,
           data: base64Data,
         },
-      });
+      };
+
+      if (content.thoughtSignature) {
+        // Only attach signature if we actually have one
+        imagePart.thoughtSignature = content.thoughtSignature;
+      }
+
+      parts.push(imagePart);
     }
 
     return {
@@ -151,8 +166,8 @@ const formatMessagesForGemini = async (messages: ConversationMessage[]) => {
   }));
 };
 
-const extractImageData = (response: any): { dataUrl: string; mimeType: string; thoughtSummaries?: string[] } => {
-  const thoughtSummaries: string[] = [];
+const extractImageData = (response: any): MessageContent[] => {
+  const contentParts: MessageContent[] = [];
 
   const blockMessage = getBlockMessage(response);
   if (blockMessage) {
@@ -161,21 +176,48 @@ const extractImageData = (response: any): { dataUrl: string; mimeType: string; t
 
   if (response?.candidates && response.candidates.length > 0) {
     const parts = response.candidates[0].content?.parts || [];
+    console.log('Gemini Response Parts:', JSON.stringify(parts, null, 2));
+    const accumulatedThoughts: string[] = [];
+    // If the first part has a signature, we can use it as a fallback for subsequent parts if missing
+    let fallbackSignature: string | undefined;
+
     for (const part of parts) {
-      if (part.thought && part.text) {
-        thoughtSummaries.push(part.text);
+      // Check all possible locations for signature
+      // The API returns 'thought_signature' in JSON, but some SDKs might normalize it.
+      // We check both snake_case and camelCase.
+      const signature = (part as any).thought_signature || (part as any).thoughtSignature;
+      
+      if (signature) {
+        console.log('Found signature in part:', signature);
+      } else {
+        console.warn('Part missing signature:', part);
+      }
+    
+      if (part.text) {
+        const isThought = part.thought || !!signature; // Treat as thought if marked or has signature
+        accumulatedThoughts.push(part.text);
+        contentParts.push({
+          type: 'text',
+          text: part.text,
+          isThought: isThought,
+          thoughtSignature: signature,
+        });
+      } else if (part.inlineData?.data) {
+        const mimeType = part.inlineData.mimeType || 'image/png';
+        contentParts.push({
+          type: 'image',
+          imageId: '', // To be filled by caller
+          mimeType,
+          isInputImage: false,
+          url: `data:${mimeType};base64,${part.inlineData.data}`,
+          thoughtSummaries: accumulatedThoughts.length ? [...accumulatedThoughts] : undefined,
+          thoughtSignature: signature,
+        });
       }
     }
-    for (const part of parts) {
-      // Skip thought-only parts
-      if (part.inlineData?.data && !part.thought) {
-        const mimeType = part.inlineData.mimeType || 'image/png';
-        return {
-          dataUrl: `data:${mimeType};base64,${part.inlineData.data}`,
-          mimeType,
-          thoughtSummaries: thoughtSummaries.length ? thoughtSummaries : undefined,
-        };
-      }
+
+    if (contentParts.some((p) => p.type === 'image')) {
+      return contentParts;
     }
   }
 
@@ -193,7 +235,7 @@ const extractImageData = (response: any): { dataUrl: string; mimeType: string; t
 export const generateImageFromConversation = async (
   messages: ConversationMessage[],
   config: GenerationConfig
-): Promise<{ dataUrl: string; mimeType: string; thoughtSummaries?: string[] }> => {
+): Promise<MessageContent[]> => {
   const apiKey = localStorage.getItem('gemini-api-key');
   if (!apiKey) {
     throw new APIKeyError();

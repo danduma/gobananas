@@ -14,8 +14,12 @@ const sanitizeThread = (thread: ConversationThread): ConversationThread => {
           ? {
               ...item,
               url: undefined,
+              thoughtSignature: item.thoughtSignature,
             }
-          : item
+          : {
+              ...item,
+              thoughtSignature: item.thoughtSignature,
+            }
       ),
     })),
   };

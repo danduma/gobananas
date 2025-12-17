@@ -36,6 +36,7 @@ export type MessageRole = 'user' | 'assistant';
 export interface TextContent {
   type: 'text';
   text: string;
+  isThought?: boolean;
   thoughtSignature?: string;
 }
 
@@ -46,6 +47,7 @@ export interface ImageContent {
   url?: string;
   isInputImage: boolean;
   thoughtSummaries?: string[];
+  thoughtSignature?: string;
 }
 
 export type MessageContent = TextContent | ImageContent;
@@ -61,6 +63,7 @@ export interface ConversationThread {
   id: string;
   messages: ConversationMessage[];
   thumbnailImageId?: string;
+  thumbnailUrl?: string;
   createdAt: number;
   updatedAt: number;
   model: Model;

@@ -5,6 +5,7 @@ import {
   ConversationMessage,
   ConversationThread,
   GenerationConfig,
+  ImageContent,
   ImageSize,
   Model,
 } from '../types';
@@ -48,6 +49,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const threadsRef = useRef<ThreadWithUi[]>([]);
+  const selectionSeqRef = useRef(0);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -67,6 +70,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     };
     bootstrap();
   }, []);
+
+  useEffect(() => {
+    threadsRef.current = threads;
+  }, [threads]);
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -105,7 +112,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     }
 
     if (!currentThread && withThumbs.length > 0) {
-      handleSelectThread(withThumbs[0].id);
+      await handleSelectThread(withThumbs[0].id, withThumbs[0]);
     }
   };
 
@@ -253,18 +260,36 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     setAttachedImages([]);
   };
 
-  const handleSelectThread = async (threadId: string) => {
-    // We allow selecting any thread, even if it is generating.
-    // The previous check or concern about overwriting state is handled by the functional updates
-    // in handleSendMessage and the safety check in the finally block.
-    
-    const stored = await ConversationStorage.getThread(threadId);
-    if (!stored) return;
-    const hydrated = await hydrateThread(stored);
-    
-    setCurrentThread(hydrated);
-    setModel(hydrated.model);
-    setTemperature(hydrated.temperature);
+  const handleSelectThread = async (threadId: string, threadHint?: ThreadWithUi) => {
+    // Allow selecting threads that haven't been persisted yet (e.g. currently generating).
+    if (currentThread?.id === threadId) return;
+
+    const selectionId = (selectionSeqRef.current += 1);
+    setError(null);
+
+    try {
+      const local =
+        threadHint ||
+        threadsRef.current.find((thread) => thread.id === threadId) ||
+        null;
+
+      const thread = local || (await ConversationStorage.getThread(threadId));
+      if (!thread) {
+        setError('Thread not found.');
+        return;
+      }
+
+      const hydrated = await hydrateThread(thread);
+      if (selectionSeqRef.current !== selectionId) return;
+
+      setCurrentThread(hydrated);
+      setModel(hydrated.model);
+      setTemperature(hydrated.temperature);
+    } catch (err: any) {
+      if (selectionSeqRef.current !== selectionId) return;
+      console.error('Failed to select thread', err);
+      setError(err?.message || 'Failed to load thread.');
+    }
   };
 
   const handleDeleteThread = async (threadId: string) => {
@@ -397,24 +422,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         imageSize,
       };
 
-      const { dataUrl: imageDataUrl, mimeType, thoughtSummaries } = await generateImageFromConversation(workingThread.messages, generationConfig);
-      const base64Data = imageDataUrl.split(',')[1];
-      const imageId = createId('gen');
-      await FileSystemStorage.saveImage(imageId, base64Data, mimeType);
+      const contentParts = await generateImageFromConversation(workingThread.messages, generationConfig);
+      
+      const processedContent = await Promise.all(contentParts.map(async (part) => {
+        if (part.type === 'image' && part.url) {
+          const base64Data = part.url.split(',')[1];
+          const imageId = createId('gen');
+          await FileSystemStorage.saveImage(imageId, base64Data, part.mimeType);
+          return {
+            ...part,
+            imageId,
+          };
+        }
+        return part;
+      }));
+
+      const imagePart = processedContent.find((p) => p.type === 'image') as ImageContent | undefined;
+      const imageDataUrl = imagePart?.url;
+      const imageId = imagePart?.imageId;
 
       const assistantMessage: ConversationMessage = {
         id: createId('msg'),
         role: 'assistant',
-        content: [
-          {
-            type: 'image',
-            imageId,
-            mimeType,
-            isInputImage: false,
-            url: imageDataUrl,
-            thoughtSummaries,
-          },
-        ],
+        content: processedContent,
         timestamp: Date.now(),
       };
 
@@ -583,8 +613,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
     if (!currentThread) return;
 
     const threadId = currentThread.id;
-    // Removed blocking check here to allow re-selection of the active thread if needed
-    // if (generatingThreadIds.has(threadId)) return;
+    // We can run generations on multiple threads in parallel, but not multiple on the SAME thread
+    if (generatingThreadIds.has(threadId)) return;
 
     const messageIndex = currentThread.messages.findIndex((msg) => msg.id === messageId);
     if (messageIndex === -1) return;
@@ -639,27 +669,33 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         imageSize,
       };
 
-      const { dataUrl, mimeType, thoughtSummaries } = await generateImageFromConversation(
+      const contentParts = await generateImageFromConversation(
         baseThread.messages,
         generationConfig
       );
-      const base64Data = dataUrl.split(',')[1];
-      const imageId = createId('gen');
-      await FileSystemStorage.saveImage(imageId, base64Data, mimeType);
+
+      const processedContent = await Promise.all(contentParts.map(async (part) => {
+        if (part.type === 'image' && part.url) {
+          const base64Data = part.url.split(',')[1];
+          const imageId = createId('gen');
+          await FileSystemStorage.saveImage(imageId, base64Data, part.mimeType);
+          return {
+            ...part,
+            imageId,
+          };
+        }
+        return part;
+      }));
+
+      const imagePart = processedContent.find((p) => p.type === 'image') as ImageContent | undefined;
+      const dataUrl = imagePart?.url || '';
+      const mimeType = imagePart?.mimeType || 'image/png';
+      const thoughtSummaries = imagePart?.thoughtSummaries;
 
       const assistantMessage: ConversationMessage = {
         id: createId('msg'),
         role: 'assistant',
-        content: [
-          {
-            type: 'image',
-            imageId,
-            mimeType,
-            isInputImage: false,
-            url: dataUrl,
-            thoughtSummaries,
-          },
-        ],
+        content: processedContent,
         timestamp: Date.now(),
       };
 

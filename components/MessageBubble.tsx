@@ -68,6 +68,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onFork, o
         <div className="space-y-3">
           {message.content.map((content, idx) => {
             if (content.type === 'text') {
+              if (content.isThought) return null;
               return (
                 <p key={idx} className="whitespace-pre-wrap leading-relaxed">
                   {content.text}
