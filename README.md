@@ -1,5 +1,4 @@
-
-# Go Bananas! Studio
+# Go Bananas 🍌 Studio
 
 High-quality image generation using the Nano Banana Pro or Nano Banana OG. Create stunning images with advanced AI technology from Google.
 

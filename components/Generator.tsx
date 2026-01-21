@@ -307,7 +307,7 @@ export const Generator: React.FC<GeneratorProps> = ({ onResetKey }) => {
             <div className="flex items-center justify-between">
               <div>
                 <h1 className="text-4xl font-extrabold bg-gradient-to-r from-yellow-400 to-orange-500 bg-clip-text text-transparent">
-                  Go Bananas! Studio
+                  Go Bananas 🍌 Studio
                 </h1>
                 <p className="text-slate-400">Create stunning visuals with 🍌.</p>
               </div>

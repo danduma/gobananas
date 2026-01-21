@@ -212,14 +212,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   };
 
   const extractImages = (fileList?: FileList | null, items?: DataTransferItemList | null) => {
-    const fromFiles = fileList ? Array.from(fileList) : [];
-    const fromItems =
-      items
-        ? Array.from(items)
-            .map((item) => (item.kind === 'file' ? item.getAsFile() : null))
-            .filter((file): file is File => Boolean(file))
-        : [];
-    return [...fromFiles, ...fromItems];
+    // Prefer DataTransferItemList if available as it's more versatile,
+    // but don't double count if both are present.
+    if (items && items.length > 0) {
+      return Array.from(items)
+        .map((item) => (item.kind === 'file' ? item.getAsFile() : null))
+        .filter((file): file is File => Boolean(file));
+    }
+
+    // Fallback to FileList
+    if (fileList && fileList.length > 0) {
+      return Array.from(fileList);
+    }
+
+    return [];
   };
 
   const handleFilesSelected = (files: FileList | null) => {
@@ -798,7 +804,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       <div className="flex-1 flex flex-col">
         <div className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Go Bananas! Studio</h1>
+            <h1 className="text-2xl font-bold">Go Bananas 🍌 Studio</h1>
             <p className="text-slate-400 text-sm">Chat your way to better images.</p>
           </div>
           <div className="flex items-center gap-3">
