@@ -6,15 +6,42 @@ interface MessageBubbleProps {
   message: ConversationMessage;
   onFork: (messageId: string) => void;
   onRerun: (messageId: string) => void;
+  onEdit?: (messageId: string, newText: string) => void;
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onFork, onRerun }) => {
+export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onFork, onRerun, onEdit }) => {
   const isUser = message.role === 'user';
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedText, setEditedText] = useState('');
 
   const toggleThoughts = (id: string) => {
     setExpandedThoughts((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const firstTextIndex = message.content.findIndex((c) => c.type === 'text' && !c.isThought);
+
+  const handleStartEdit = () => {
+    const textContent = message.content[firstTextIndex];
+    if (textContent && textContent.type === 'text') {
+      const cleanText = textContent.text.replace(/\n\n\[Image settings: .*\]$/, '');
+      setEditedText(cleanText);
+      setIsEditing(true);
+      setMenuOpen(false);
+    }
+  };
+
+  const handleSaveEdit = () => {
+    if (onEdit) {
+      onEdit(message.id, editedText);
+      setIsEditing(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditedText('');
   };
 
   return (
@@ -50,6 +77,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onFork, o
               >
                 Fork from here
               </button>
+              {isUser && onEdit && (
+                <button
+                  type="button"
+                  onClick={handleStartEdit}
+                  className="w-full text-left px-3 py-2 text-sm text-slate-100 hover:bg-slate-800"
+                >
+                  Edit
+                </button>
+              )}
               {isUser && (
                 <button
                   type="button"
@@ -59,7 +95,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onFork, o
                   }}
                   className="w-full text-left px-3 py-2 text-sm text-slate-100 hover:bg-slate-800 rounded-b-lg"
                 >
-                  Re-run from here
+                  Run again
                 </button>
               )}
             </div>
@@ -69,6 +105,35 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onFork, o
           {message.content.map((content, idx) => {
             if (content.type === 'text') {
               if (content.isThought) return null;
+
+              if (isEditing && idx === firstTextIndex) {
+                return (
+                  <div key={idx} className="w-full space-y-3">
+                    <textarea
+                      value={editedText}
+                      onChange={(e) => setEditedText(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none resize-none"
+                      rows={3}
+                      autoFocus
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={handleCancelEdit}
+                        className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleSaveEdit}
+                        className="px-3 py-1.5 text-xs font-medium text-slate-900 bg-yellow-500 hover:bg-yellow-400 rounded-lg transition-colors"
+                      >
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <p key={idx} className="whitespace-pre-wrap leading-relaxed">
                   {content.text}

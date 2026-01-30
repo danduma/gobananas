@@ -33,6 +33,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   const [threads, setThreads] = useState<ThreadWithUi[]>([]);
   const [currentThread, setCurrentThread] = useState<ThreadWithUi | null>(null);
   const [generatingThreadIds, setGeneratingThreadIds] = useState<Set<string>>(new Set());
+  const [isForking, setIsForking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveDirectory, setSaveDirectory] = useState<string | null>(() => {
     try {
@@ -518,101 +519,259 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   const handleForkThread = async (messageId: string) => {
     if (!currentThread) return;
 
+    setIsForking(true);
+    try {
+      const hasAccess = await ensureDirectoryAccess();
+      if (!hasAccess) {
+        setError('Please select a save folder to continue.');
+        return;
+      }
+
+      const messageIndex = currentThread.messages.findIndex((msg) => msg.id === messageId);
+      if (messageIndex === -1) return;
+
+      // If forking from the very first message, we treat it as "Edit & Resend"
+      // by populating the input fields and resetting to a new thread state.
+      if (messageIndex === 0) {
+        const message = currentThread.messages[0];
+        if (message.role === 'user') {
+          // Extract text
+          const textContent = message.content.find((c) => c.type === 'text');
+          if (textContent && textContent.type === 'text') {
+            // Remove the appended settings string to restore original prompt
+            const cleanText = textContent.text.replace(/\n\n\[Image settings: .*\]$/, '');
+            setMessageInput(cleanText);
+          } else {
+            setMessageInput('');
+          }
+
+          // Extract images and convert to Files
+          const imageItems = message.content.filter((c) => c.type === 'image');
+          const files: File[] = [];
+
+          for (const item of imageItems) {
+            if (item.type !== 'image') continue;
+
+            try {
+              let base64 = '';
+              if (item.url && item.url.startsWith('data:')) {
+                base64 = item.url.split(',')[1];
+              } else {
+                base64 = await FileSystemStorage.loadImageData(item.imageId, item.isInputImage, item.mimeType);
+              }
+
+              if (base64) {
+                const byteCharacters = atob(base64);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                  byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: item.mimeType });
+                const file = new File([blob], item.imageId, { type: item.mimeType });
+                files.push(file);
+              }
+            } catch (err) {
+              console.warn('Failed to load image for forking', err);
+            }
+          }
+
+          setAttachedImages(files);
+          setCurrentThread(null); // Switch to "New Conversation" mode
+          return;
+        }
+      }
+
+      const forkMessages: ConversationMessage[] = currentThread.messages
+        .slice(0, messageIndex + 1)
+        .map((msg) => ({
+          ...msg,
+          content: msg.content.map((item) => ({ ...item })),
+        }));
+
+      const now = Date.now();
+      const { thumbnailImageId, thumbnailUrl } = getThumbnailFromMessages(
+        forkMessages,
+        currentThread.thumbnailImageId,
+        currentThread.thumbnailUrl
+      );
+      const preview = getLastTextPreview({
+        ...currentThread,
+        messages: forkMessages,
+      });
+
+      const forkedThread: ThreadWithUi = {
+        id: createId('thread'),
+        messages: forkMessages,
+        createdAt: now,
+        updatedAt: now,
+        model: currentThread.model,
+        temperature: currentThread.temperature,
+        thumbnailImageId,
+        thumbnailUrl,
+        lastMessagePreview: preview,
+      };
+
+      await persistThread(forkedThread);
+      setCurrentThread(forkedThread);
+      setMessageInput('');
+      setAttachedImages([]);
+    } finally {
+      setIsForking(false);
+    }
+  };
+
+  const handleEditMessage = async (messageId: string, newText: string) => {
+    if (!currentThread) return;
+
+    const threadId = currentThread.id;
+    if (generatingThreadIds.has(threadId)) return;
+
+    const messageIndex = currentThread.messages.findIndex((msg) => msg.id === messageId);
+    if (messageIndex === -1) return;
+
     const hasAccess = await ensureDirectoryAccess();
     if (!hasAccess) {
       setError('Please select a save folder to continue.');
       return;
     }
 
-    const messageIndex = currentThread.messages.findIndex((msg) => msg.id === messageId);
-    if (messageIndex === -1) return;
+    setGeneratingThreadIds((prev) => new Set(prev).add(threadId));
+    setError(null);
 
-    // If forking from the very first message, we treat it as "Edit & Resend"
-    // by populating the input fields and resetting to a new thread state.
-    if (messageIndex === 0) {
-      const message = currentThread.messages[0];
-      if (message.role === 'user') {
-        // Extract text
-        const textContent = message.content.find((c) => c.type === 'text');
-        if (textContent && textContent.type === 'text') {
-          // Remove the appended settings string to restore original prompt
-          const cleanText = textContent.text.replace(/\n\n\[Image settings: .*\]$/, '');
-          setMessageInput(cleanText);
-        } else {
-          setMessageInput('');
+    try {
+      const originalMsg = currentThread.messages[messageIndex];
+      const finalText = `${newText.trim()}\n\n[Image settings: aspect ratio ${aspectRatio}, resolution ${imageSize}]`;
+
+      let textFound = false;
+      const newContent = originalMsg.content.map((c) => {
+        if (c.type === 'text' && !c.isThought && !textFound) {
+          textFound = true;
+          return { ...c, text: finalText };
         }
+        return { ...c };
+      });
 
-        // Extract images and convert to Files
-        const imageItems = message.content.filter((c) => c.type === 'image');
-        const files: File[] = [];
+      if (!textFound) {
+        newContent.unshift({ type: 'text', text: finalText });
+      }
 
-        for (const item of imageItems) {
-          if (item.type !== 'image') continue;
+      const updatedUserMsg = {
+        ...originalMsg,
+        content: newContent,
+        timestamp: Date.now(),
+      };
 
-          try {
-            let base64 = '';
-            if (item.url && item.url.startsWith('data:')) {
-              base64 = item.url.split(',')[1];
-            } else {
-              base64 = await FileSystemStorage.loadImageData(item.imageId, item.isInputImage, item.mimeType);
-            }
+      const truncatedMessages: ConversationMessage[] = [
+        ...currentThread.messages.slice(0, messageIndex),
+        updatedUserMsg,
+      ];
 
-            if (base64) {
-              const byteCharacters = atob(base64);
-              const byteNumbers = new Array(byteCharacters.length);
-              for (let i = 0; i < byteCharacters.length; i++) {
-                byteNumbers[i] = byteCharacters.charCodeAt(i);
-              }
-              const byteArray = new Uint8Array(byteNumbers);
-              const blob = new Blob([byteArray], { type: item.mimeType });
-              const file = new File([blob], item.imageId, { type: item.mimeType });
-              files.push(file);
-            }
-          } catch (err) {
-            console.warn('Failed to load image for forking', err);
+      const now = Date.now();
+      const { thumbnailImageId, thumbnailUrl } = getThumbnailFromMessages(
+        truncatedMessages,
+        currentThread.thumbnailImageId,
+        currentThread.thumbnailUrl
+      );
+      const preview = getLastTextPreview({
+        ...currentThread,
+        messages: truncatedMessages,
+      });
+
+      const baseThread: ThreadWithUi = {
+        ...currentThread,
+        messages: truncatedMessages,
+        updatedAt: now,
+        thumbnailImageId,
+        thumbnailUrl,
+        lastMessagePreview: preview,
+      };
+
+      // Optimistically update the UI to show the edited text immediately
+      setCurrentThread((prev) => (prev?.id === baseThread.id ? baseThread : prev));
+
+      await persistThread(baseThread);
+
+      const generationConfig: GenerationConfig = {
+        model: baseThread.model,
+        temperature: baseThread.temperature,
+        aspectRatio,
+        imageSize,
+      };
+
+      const contentParts = await generateImageFromConversation(
+        baseThread.messages,
+        generationConfig
+      );
+
+      const processedContent = await Promise.all(
+        contentParts.map(async (part) => {
+          if (part.type === 'image' && part.url) {
+            const base64Data = part.url.split(',')[1];
+            const imageId = createId('gen');
+            await FileSystemStorage.saveImage(imageId, base64Data, part.mimeType);
+            return {
+              ...part,
+              imageId,
+            };
           }
-        }
+          return part;
+        })
+      );
 
-        setAttachedImages(files);
-        setCurrentThread(null); // Switch to "New Conversation" mode
+      const imagePart = processedContent.find((p) => p.type === 'image') as ImageContent | undefined;
+      const imageDataUrl = imagePart?.url;
+      const imageId = imagePart?.imageId;
+
+      const assistantMessage: ConversationMessage = {
+        id: createId('msg'),
+        role: 'assistant',
+        content: processedContent,
+        timestamp: Date.now(),
+      };
+
+      const updatedMessages = [...baseThread.messages, assistantMessage];
+      const thumbFromUpdated = getThumbnailFromMessages(
+        updatedMessages,
+        baseThread.thumbnailImageId,
+        baseThread.thumbnailUrl
+      );
+      const updatedThread: ThreadWithUi = {
+        ...baseThread,
+        messages: updatedMessages,
+        updatedAt: Date.now(),
+        thumbnailImageId: thumbFromUpdated.thumbnailImageId,
+        thumbnailUrl: thumbFromUpdated.thumbnailUrl,
+        lastMessagePreview:
+          getLastTextPreview({
+            ...baseThread,
+            messages: updatedMessages,
+          }) || preview,
+      };
+
+      await persistThread(updatedThread);
+      setCurrentThread((prev) => (prev?.id === updatedThread.id ? updatedThread : prev));
+    } catch (err: any) {
+      if (err?.name === 'APIKeyError') {
+        onResetKey();
         return;
       }
+      console.error(err);
+      setError(err?.message || 'Failed to edit and regenerate.');
+    } finally {
+      setGeneratingThreadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(threadId);
+        return next;
+      });
+      if (currentThread?.id === threadId) {
+        const stored = await ConversationStorage.getThread(threadId);
+        if (stored) {
+          const hydrated = await hydrateThread(stored);
+          setCurrentThread(hydrated);
+        }
+      }
     }
-
-    const forkMessages: ConversationMessage[] = currentThread.messages
-      .slice(0, messageIndex + 1)
-      .map((msg) => ({
-        ...msg,
-        content: msg.content.map((item) => ({ ...item })),
-      }));
-
-    const now = Date.now();
-    const { thumbnailImageId, thumbnailUrl } = getThumbnailFromMessages(
-      forkMessages,
-      currentThread.thumbnailImageId,
-      currentThread.thumbnailUrl
-    );
-    const preview = getLastTextPreview({
-      ...currentThread,
-      messages: forkMessages,
-    });
-
-    const forkedThread: ThreadWithUi = {
-      id: createId('thread'),
-      messages: forkMessages,
-      createdAt: now,
-      updatedAt: now,
-      model: currentThread.model,
-      temperature: currentThread.temperature,
-      thumbnailImageId,
-      thumbnailUrl,
-      lastMessagePreview: preview,
-    };
-
-    await persistThread(forkedThread);
-    setCurrentThread(forkedThread);
-    setMessageInput('');
-    setAttachedImages([]);
   };
 
   const handleRerunFromMessage = async (messageId: string) => {
@@ -771,6 +930,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
             message={message}
             onFork={handleForkThread}
             onRerun={handleRerunFromMessage}
+            onEdit={handleEditMessage}
           />
         ))}
         {currentThread && generatingThreadIds.has(currentThread.id) && (
@@ -799,6 +959,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         onSelectThread={handleSelectThread}
         onDeleteThread={handleDeleteThread}
         onNewThread={handleNewConversation}
+        generatingThreadIds={generatingThreadIds}
       />
 
       <div className="flex-1 flex flex-col">
@@ -919,6 +1080,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
                 value={messageInput}
                 onChange={(e) => setMessageInput(e.target.value)}
                 onPaste={handlePaste}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
                 placeholder="Describe the image you want or ask for tweaks..."
                 className="w-full bg-slate-900 border border-slate-700 rounded-xl p-4 pr-28 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none resize-none"
                 rows={3}
@@ -970,6 +1137,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
           </div>
         </div>
       </div>
+
+      {isForking && (
+        <div className="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8 flex flex-col items-center gap-4 shadow-xl">
+            <Loader2 className="w-10 h-10 animate-spin text-yellow-500" />
+            <div className="text-center">
+              <h3 className="text-lg font-semibold text-white">Forking Conversation</h3>
+              <p className="text-slate-400 text-sm mt-1">Please wait while we duplicate the thread history...</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

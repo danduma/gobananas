@@ -1,5 +1,5 @@
 import React from 'react';
-import { Clock, Plus, Trash2 } from 'lucide-react';
+import { Clock, Plus, Trash2, Loader2 } from 'lucide-react';
 import { ConversationThread } from '../types';
 
 export interface ConversationSidebarThread extends ConversationThread {
@@ -13,6 +13,7 @@ interface ConversationSidebarProps {
   onSelectThread: (threadId: string) => void;
   onDeleteThread: (threadId: string) => void;
   onNewThread: () => void;
+  generatingThreadIds: Set<string>;
 }
 
 export const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
@@ -21,6 +22,7 @@ export const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
   onSelectThread,
   onDeleteThread,
   onNewThread,
+  generatingThreadIds,
 }) => {
   const formatTimestamp = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -90,23 +92,30 @@ export const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
-                        <p className="text-sm text-white font-semibold truncate">
+                        <p className="text-sm text-white font-semibold truncate flex-1 mr-2">
                           {thread.messages[0]?.content.find((c) => c.type === 'text')?.text ||
                             'New conversation'}
                         </p>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteThread(thread.id);
-                          }}
-                          className="p-1 text-slate-400 hover:text-red-400"
-                          title="Delete thread"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {generatingThreadIds.has(thread.id) && (
+                            <Loader2 className="w-4 h-4 animate-spin text-yellow-500" />
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.confirm('Are you sure you want to delete this thread?')) {
+                                onDeleteThread(thread.id);
+                              }
+                            }}
+                            className="p-1 text-slate-400 hover:text-red-400"
+                            title="Delete thread"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                       <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                        {thread.lastMessagePreview || 'Awaiting next message'}
+                        {thread.lastMessagePreview || ''}
                       </p>
                       <p className="text-[11px] text-slate-500 mt-1">
                         Updated {formatTimestamp(thread.updatedAt)}
