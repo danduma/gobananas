@@ -35,7 +35,7 @@ export const ImageAttachment: React.FC<ImageAttachmentProps> = ({ files, onRemov
           <button
             type="button"
             onClick={() => onRemove(index)}
-            className="absolute top-1 right-1 bg-black/70 text-white rounded-full p-1 hover:bg-black"
+            className="absolute top-1 right-1 bg-black/70 text-white rounded-full p-1 hover:bg-black z-10"
             aria-label="Remove attachment"
           >
             <X className="w-4 h-4" />
