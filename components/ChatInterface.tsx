@@ -35,6 +35,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
   const [generatingThreadIds, setGeneratingThreadIds] = useState<Set<string>>(new Set());
   const [isForking, setIsForking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Keep track of the current thread ID in a ref so async callbacks can check
+  // if the user is still viewing the same thread before updating state.
+  const currentThreadIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    currentThreadIdRef.current = currentThread?.id || null;
+  }, [currentThread]);
   const [saveDirectory, setSaveDirectory] = useState<string | null>(() => {
     try {
       return localStorage.getItem('nano-banana-save-directory');
@@ -484,11 +492,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
       });
       // If we are still viewing this thread, ensure we have the latest version
       // This helps if the user switched away and back while generating
-      if (currentThread?.id === threadId) {
+      if (currentThreadIdRef.current === threadId) {
         const stored = await ConversationStorage.getThread(threadId);
         if (stored) {
            const hydrated = await hydrateThread(stored);
-           setCurrentThread(hydrated);
+           // Double check we're still on the same thread after the async fetch
+           if (currentThreadIdRef.current === threadId) {
+             setCurrentThread(hydrated);
+           }
         }
       }
     }
@@ -764,11 +775,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         next.delete(threadId);
         return next;
       });
-      if (currentThread?.id === threadId) {
+      if (currentThreadIdRef.current === threadId) {
         const stored = await ConversationStorage.getThread(threadId);
         if (stored) {
           const hydrated = await hydrateThread(stored);
-          setCurrentThread(hydrated);
+          if (currentThreadIdRef.current === threadId) {
+            setCurrentThread(hydrated);
+          }
         }
       }
     }
@@ -899,11 +912,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onResetKey }) => {
         return next;
       });
       // If we are still viewing this thread, ensure we have the latest version
-      if (currentThread?.id === threadId) {
+      if (currentThreadIdRef.current === threadId) {
         const stored = await ConversationStorage.getThread(threadId);
         if (stored) {
            const hydrated = await hydrateThread(stored);
-           setCurrentThread(hydrated);
+           if (currentThreadIdRef.current === threadId) {
+             setCurrentThread(hydrated);
+           }
         }
       }
     }
